@@ -1,0 +1,230 @@
+Design a complete responsive web application for EcoTrace, an Australian biodiversity intelligence platform that helps everyday Australians and investors understand a company’s biodiversity impact. The product should feel trustworthy, clean, eco-friendly, and modern, with a premium SaaS aesthetic. Use a soft cream or white background, green and blue palette, rounded cards, subtle shadows, generous whitespace, and flat vector icons. The UI must be simple enough for everyday users but detailed enough for investors and ESG professionals.
+The app should support three main user types:
+Everyday consumers searching by barcode, brand, or company name.
+Investors using reports, watchlists, and alerts.
+ESG/b2b users using an API and dashboard.
+Create the design as a multi-page Figma file with the following structure:
+Design system page with colors, typography, spacing, buttons, cards, chips, badges, tabs, tables, forms, and alert states.
+Page 1: Consumer search and entity resolution flow.
+Page 2: Company overview and biodiversity risk results.
+Page 3: Analyse page with evidence, locations, and map-based risk.
+Page 4: Knowledge graph and source provenance view.
+Page 5: Supply chain intelligence and supplier mapping.
+Page 6: Investor dashboard with TNFD report, watchlist, and alerts.
+Page 7: Admin / pipeline monitoring for data ingestion and QA.
+Page 8: B2B API and export page.
+Page 9: Settings, permissions, and report history.
+The UI should make biodiversity risk easy to understand in under 30 seconds for consumers, while giving investors a detailed, auditable, TNFD-aligned view. Use a left sidebar for navigation in desktop, a top search bar, and a right-side evidence drawer in detailed views. Show realistic dashboard content, charts, maps, evidence cards, confidence indicators, audit trail markers, and biodiversity badges. Include empty states, loading states, error states, and confirmation modals.
+For the consumer experience, show barcode scanning, brand search, company search, a biodiversity risk score from 0–100, green/yellow/red badges, and a “Better Choice” alternative recommendation panel. For the investor experience, show TNFD LEAP sections, watchlists, portfolio alerts, evidence timelines, and export to PDF. For the supply chain experience, show subsidiary relationships, supplier nodes, and a risk propagation view. For the provenance experience, show source documents, confidence scores, timestamps, and traceable claim chains.
+Use a clean, highly legible typography system, accessible contrast, and polished components. The overall product should look like a real venture-backed SaaS platform, not a concept mockup. Build it as a professional, production-ready design system and app structure.
+Page-by-Page Figma Structure
+0. Design System
+This page should be the foundation for the whole product.
+Include:
+Color palette: primary green, secondary blue, accent yellow/orange, neutrals, success/warning/error states.
+Typography scale: H1, H2, H3, body, caption, labels.
+Buttons: primary, secondary, ghost, danger.
+Badges: low risk, medium risk, high risk, confidence, verified, draft.
+Cards: simple, hover, evidence, KPI, alert cards.
+Navigation styles: sidebar, top bar, tabs, breadcrumbs.
+Form elements: search input, dropdown, multi-select, toggle, radio, checkbox.
+Tables and filters.
+Chart styles and icon rules.
+Spacing system and grid rules.
+Status states: loading, empty, error, success.
+Purpose:
+Ensures consistent visuals across all 6 epics and makes the system scalable.
+1. Consumer Search & Entity Resolution
+This page corresponds to Epic 1.
+Main layout:
+Hero search box at the top.
+Three search methods:
+Scan barcode.
+Search brand name.
+Search company name.
+Search suggestions and recent searches.
+Entity resolution results panel showing:
+Brand name.
+Verified company legal name.
+ABN.
+Industry.
+Confidence level.
+A confirmation card for ambiguous matches.
+Barcode scanning modal and loading state.
+Key components:
+Search cards.
+Entity match list.
+Verification badge.
+“Confirm this company” dialog.
+“Not the right company?” correction link.
+Goal:
+Make the first interaction fast, simple, and clear.
+2. Company Overview & Risk
+This page is the first result screen after a successful search.
+Main layout:
+Company header with logo, verified ABN, industry, and location.
+Large biodiversity risk badge (0–100).
+Summary text in plain English.
+KPI cards:
+Nature risk.
+Confidence score.
+Number of evidence sources.
+Last updated.
+“Better Choice” suggestion card for consumer users.
+Key findings panel.
+Sidebar with quick filters.
+Key components:
+Risk gauge.
+Score trend chart.
+Summary cards.
+Action callouts.
+Comparison cards.
+Goal:
+Deliver a simple verdict instantly.
+3. Analyse Page
+This page corresponds to Epic 3.
+Main layout:
+Map of Australia or regional map section.
+Selected locations list.
+Evidence cards from news, reports, and government data.
+Biodiverse footprint panel.
+Protected area and species overlay cards.
+Confidence scoring breakdown.
+“Why this was flagged” explanation box.
+Source preview drawer on the right.
+Key components:
+Map pins and region overlays.
+Evidence timeline.
+Claim extraction cards.
+Risk reasoning cards.
+Confidence meter.
+Goal:
+Show how EcoTrace turns raw data into location-based biodiversity analysis.
+4. Knowledge Graph & Provenance
+This page corresponds to Epic 4.
+Main layout:
+Interactive graph view in the center.
+Node types:
+Company.
+Location.
+Supplier.
+Species.
+Evidence.
+Risk.
+Timeline or version selector.
+Right panel for source document details.
+Claim trace panel showing how the risk was created.
+Audit trail table with timestamps and sources.
+Key components:
+Graph node clusters.
+Relationship lines.
+Hover state on nodes.
+Evidence chain panel.
+Provenance tags.
+Claim confidence labels.
+Goal:
+Make transparency and auditability feel core to the product.
+5. Supply Chain Intelligence
+This page expands the platform with supplier and subsidiary visibility.
+Main layout:
+Parent company at the top.
+Supplier tree or network graph below.
+Subsidiary and Tier-1 supplier cards.
+Risk propagation indicators.
+Supplier location badges.
+Supplier-level biodiversity scores.
+“High-risk supplier” warnings.
+Key components:
+Graph or hierarchy tree.
+Supplier cards.
+Risk spillover tags.
+Parent-to-supplier connections.
+Source-based confidence states.
+Goal:
+Show that EcoTrace looks beyond the parent company into the value chain.
+6. Investor Dashboard
+This page corresponds to the investor workflow and TNFD output.
+Main layout:
+Portfolio overview cards.
+Watchlist table with risk changes.
+TNFD LEAP report summary.
+Company comparison chart.
+Alert notifications.
+Export to PDF button.
+Recent risk movements and trends.
+Key components:
+Portfolio heatmap.
+TNFD LEAP section cards.
+Risk trend chart.
+Alert drawer.
+Watchlist filters.
+Goal:
+Make the product useful for investors, analysts, and ESG teams.
+7. Data Pipeline & Admin
+This page supports operations and monitoring.
+Main layout:
+Ingestion status cards.
+Queue status.
+Failed jobs table.
+Source coverage metrics.
+Model performance and confidence metrics.
+Manual review queue.
+Key components:
+Pipeline activity log.
+Ingestion health card.
+Retry/error actions.
+QA approval workflow.
+Goal:
+Show that EcoTrace is a robust, maintainable system.
+8. B2B API & Export
+This page supports enterprise integrations.
+Main layout:
+API key panel.
+Endpoint list.
+Example request/response code blocks.
+Export format cards.
+Usage statistics.
+Rate limit alerts.
+Key components:
+JSON preview.
+API endpoint table.
+Webhook configuration.
+Export history.
+Goal:
+Support business model growth and platform integration.
+9. Settings & History
+This page handles user preferences and trust features.
+Main layout:
+Profile settings.
+Notification preferences.
+Privacy controls.
+Report history list.
+Saved companies.
+Audit logs.
+Key components:
+Toggle groups.
+Notification settings.
+Report version history.
+Download buttons.
+Goal:
+Keep users in control of their data and experience.
+Suggested Figma File Structure
+Use this exact structure in Figma:
+Page 00 — Foundations
+Page 01 — Consumer Search
+Page 02 — Company Overview
+Page 03 — Analyse & Evidence
+Page 04 — Knowledge Graph
+Page 05 — Supply Chain Intelligence
+Page 06 — Investor Dashboard
+Page 07 — Pipeline Admin
+Page 08 — B2B API
+Page 09 — Settings & History
+Page 10 — Prototype Flows
+Recommended Prototype Flows
+Create these clickable flows in Figma:
+Search barcode → verify company → risk result.
+Search brand → resolve company → analyse evidence.
+View company → open audit trail → inspect source document.
+Open portfolio watchlist → receive alert → review TNFD report.
+Inspect supplier graph → see high-risk supplier → compare alternatives.

@@ -1,0 +1,47 @@
+/* Custom slider styles for EcoTrace */
+
+.slick-slider {
+  position: relative;
+}
+
+.slick-list {
+  overflow: hidden;
+}
+
+.slick-track {
+  display: flex;
+  align-items: stretch;
+}
+
+.slick-slide {
+  height: auto;
+}
+
+.slick-slide > div {
+  height: 100%;
+}
+
+/* Hide default slick arrows */
+.slick-prev,
+.slick-next {
+  z-index: 20;
+}
+
+.slick-prev:before,
+.slick-next:before {
+  display: none;
+}
+
+/* Custom arrow positioning */
+.slick-prev {
+  left: -20px;
+}
+
+.slick-next {
+  right: -20px;
+}
+
+.slick-disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
