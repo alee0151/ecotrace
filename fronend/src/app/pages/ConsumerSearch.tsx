@@ -32,22 +32,110 @@ export function ConsumerSearch() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'barcode' | 'brand' | 'company'>('barcode');
   const [value, setValue] = useState('');
-  const [resolved, setResolved] = useState<null | { brand: string; product: string; parent: string; abn: string; score: number }>(null);
+  const [resolved, setResolved] = useState<null | {
+  brand: string;
+  product: string;
+  parent: string;
+  abn: string;
+  score: number;
+  source?: string;
+  imageUrl?: string;
+  }>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  const resolve = () => {
-    setResolved({
-      brand: 'Dairy Farmers',
-      product: 'Dairy Farmers Full Cream Milk 2L',
-      parent: 'Bega Cheese Limited',
-      abn: '81 008 358 503',
-      score: 54,
+  const resolve = async () => {
+  const searchValue = value.trim();
+
+  if (!searchValue) {
+    alert("Please enter a barcode, brand, company name, or ABN.");
+    return;
+  }
+
+  try {
+    const requestBody =
+      mode === "barcode"
+        ? {
+            barcode: searchValue,
+            brand: "",
+            company_or_abn: "",
+          }
+        : mode === "brand"
+        ? {
+            barcode: "",
+            brand: searchValue,
+            company_or_abn: "",
+          }
+        : {
+            barcode: "",
+            brand: "",
+            company_or_abn: searchValue,
+          };
+
+    const res = await fetch("http://127.0.0.1:8000/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
     });
-    
+
+    const data = await res.json();
+
+    console.log("Search result:", data);
+
+    if (!res.ok) {
+      throw new Error(data.detail || "Search failed");
+    }
+
+    const firstResult = data.results?.[0];
+
+    if (!firstResult || firstResult.status === "not_found") {
+      alert(firstResult?.message || "No result found");
+      return;
+    }
+
+    setResolved({
+      brand:
+        firstResult.brand?.brand_name ||
+        firstResult.brand?.brand ||
+        firstResult.product?.brand ||
+        "Unknown brand",
+
+      product:
+        firstResult.product?.product_name ||
+        firstResult.company?.legal_name ||
+        firstResult.brand?.brand_name ||
+        firstResult.input_value ||
+        "Unknown product",
+
+      parent:
+        firstResult.company?.legal_name ||
+        firstResult.company?.manufacturer ||
+        "Unknown company",
+
+      abn:
+        firstResult.company?.abn ||
+        firstResult.abn_verification?.abn ||
+        "N/A",
+
+      score: firstResult.confidence || 50,
+
+      source: firstResult.source,
+
+      imageUrl: firstResult.product?.image_url,
+    });
+
     setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      resultsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     }, 100);
-  };
+  } catch (err) {
+    console.error(err);
+    alert("Error connecting to backend");
+  }
+};
 
   return (
     <div className="-m-0 bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] min-h-[calc(100vh-65px)]">
@@ -167,7 +255,11 @@ export function ConsumerSearch() {
                   return (
                     <button
                       key={s.label}
-                      onClick={resolve}
+                      onClick={() => {
+                        setMode("company");
+                        setValue(s.abn);
+                        setTimeout(() => resolve(), 0);
+                      }}
                       className="group relative p-5 bg-white border border-stone-200 hover:border-emerald-400 hover:shadow-md rounded-2xl text-left transition"
                     >
                       <div className="font-mono text-[9px] tracking-[0.2em] text-stone-400 mb-3">0{i + 1} / 04</div>
@@ -225,6 +317,13 @@ export function ConsumerSearch() {
                     <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
                   </div>
                   <div className="text-[18px] text-stone-900 mt-0.5 tracking-tight">{resolved.product}</div>
+                                  {resolved.imageUrl && (
+                  <img
+                    src={resolved.imageUrl}
+                    alt={resolved.product}
+                    className="mt-3 w-24 h-24 object-cover rounded-xl border border-stone-200"
+                  />
+                )}
                   <div className="text-[13px] text-stone-600">Brand <span className="text-stone-900">{resolved.brand}</span> · Owned by <span className="text-stone-900">{resolved.parent}</span> · ABN {resolved.abn}</div>
                   <div className="mt-2"><Confidence value={94} /></div>
                 </div>
