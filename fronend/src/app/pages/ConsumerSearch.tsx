@@ -19,7 +19,6 @@ const betterChoices = [
   { brand: 'Pure Harvest', score: 71, level: 'Medium' as const, note: 'Plant-based alternative with 38% lower biodiversity pressure.' },
 ];
 
-// Topographic contour SVG (matches Landing aesthetic)
 const TopoSvg = ({ className = '' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 800 400" preserveAspectRatio="none" fill="none">
     {[0, 1, 2, 3, 4, 5, 6].map(i => (
@@ -33,113 +32,138 @@ export function ConsumerSearch() {
   const [mode, setMode] = useState<'barcode' | 'brand' | 'company'>('barcode');
   const [value, setValue] = useState('');
   const [resolved, setResolved] = useState<null | {
-  brand: string;
-  product: string;
-  parent: string;
-  abn: string;
-  score: number;
-  source?: string;
-  imageUrl?: string;
+    brand: string;
+    product: string;
+    parent: string;
+    abn: string;
+    score: number;
+    source?: string;
+    imageUrl?: string;
   }>(null);
+
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  const resolve = async () => {
-  const searchValue = value.trim();
-
-  if (!searchValue) {
-    alert("Please enter a barcode, brand, company name, or ABN.");
-    return;
-  }
-
-  try {
-    const requestBody =
-      mode === "barcode"
-        ? {
-            barcode: searchValue,
-            brand: "",
-            company_or_abn: "",
-          }
-        : mode === "brand"
-        ? {
-            barcode: "",
-            brand: searchValue,
-            company_or_abn: "",
-          }
-        : {
-            barcode: "",
-            brand: "",
-            company_or_abn: searchValue,
-          };
-
-    const res = await fetch("http://127.0.0.1:8000/api/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const data = await res.json();
-
-    console.log("Search result:", data);
-
-    if (!res.ok) {
-      throw new Error(data.detail || "Search failed");
+  const buildRequestBody = (
+    searchMode: 'barcode' | 'brand' | 'company',
+    searchValue: string
+  ) => {
+    if (searchMode === 'barcode') {
+      return {
+        barcode: searchValue,
+        brand: '',
+        company_or_abn: '',
+      };
     }
 
-    const firstResult = data.results?.[0];
+    if (searchMode === 'brand') {
+      return {
+        barcode: '',
+        brand: searchValue,
+        company_or_abn: '',
+      };
+    }
 
-    if (!firstResult || firstResult.status === "not_found") {
-      alert(firstResult?.message || "No result found");
+    return {
+      barcode: '',
+      brand: '',
+      company_or_abn: searchValue,
+    };
+  };
+
+  const resolveWithValue = async (
+    searchMode: 'barcode' | 'brand' | 'company',
+    rawValue: string
+  ) => {
+    const searchValue = rawValue.trim();
+
+    if (!searchValue) {
+      alert('Please enter a barcode, brand, company name, or ABN.');
       return;
     }
 
-    setResolved({
-      brand:
-        firstResult.brand?.brand_name ||
-        firstResult.brand?.brand ||
-        firstResult.product?.brand ||
-        "Unknown brand",
+    try {
+      const requestBody = buildRequestBody(searchMode, searchValue);
 
-      product:
-        firstResult.product?.product_name ||
-        firstResult.company?.legal_name ||
-        firstResult.brand?.brand_name ||
-        firstResult.input_value ||
-        "Unknown product",
-
-      parent:
-        firstResult.company?.legal_name ||
-        firstResult.company?.manufacturer ||
-        "Unknown company",
-
-      abn:
-        firstResult.company?.abn ||
-        firstResult.abn_verification?.abn ||
-        "N/A",
-
-      score: firstResult.confidence || 50,
-
-      source: firstResult.source,
-
-      imageUrl: firstResult.product?.image_url,
-    });
-
-    setTimeout(() => {
-      resultsRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
+      const res = await fetch('http://127.0.0.1:8000/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
       });
-    }, 100);
-  } catch (err) {
-    console.error(err);
-    alert("Error connecting to backend");
-  }
-};
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.detail || 'Search failed');
+      }
+
+      if (!data.query_id) {
+        console.error('No query_id returned', data);
+        alert('Search completed, but no query_id was returned.');
+        return;
+      }
+
+      localStorage.setItem('query_id', data.query_id);
+      console.log('Search result:', data);
+
+      const result = data.result;
+
+      if (!result) {
+        console.error('No result returned', data);
+        alert('No matching result found.');
+        return;
+      }
+
+      setResolved({
+        brand:
+          result.brand?.brand_name ||
+          result.product?.brand ||
+          result.input_value ||
+          'Unknown brand',
+
+        product:
+          result.product?.product_name ||
+          result.company?.legal_name ||
+          result.brand?.brand_name ||
+          result.input_value ||
+          'Unknown product',
+
+        parent:
+          result.company?.legal_name ||
+          result.legal_owner ||
+          result.manufacturer ||
+          result.abn_verification?.legal_name ||
+          'Unknown company',
+
+        abn:
+          result.company?.abn ||
+          result.abn_verification?.abn ||
+          'N/A',
+
+        score: result.confidence || 50,
+        source: result.source,
+        imageUrl: result.product?.image_url,
+      });
+
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }, 100);
+    } catch (err) {
+      console.error(err);
+      alert('Error connecting to backend');
+    }
+  };
+
+  const resolve = () => {
+    resolveWithValue(mode, value);
+  };
 
   return (
     <div className="-m-0 bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] min-h-[calc(100vh-65px)]">
-      {/* HERO SEARCH */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0">
           <ImageWithFallback src={HERO_IMG} alt="forest canopy" className="w-full h-full object-cover" />
@@ -161,15 +185,16 @@ export function ConsumerSearch() {
             <span className="w-8 h-px bg-emerald-300/60" />
             <span>§ 01 · RESOLVE & SCORE</span>
           </div>
+
           <h1 className="text-[40px] md:text-[52px] leading-[1.05] tracking-tight text-white max-w-2xl">
             What's the real impact
             <span className="block italic text-emerald-200 font-light">of what you buy?</span>
           </h1>
+
           <p className="mt-5 text-stone-200/85 text-[15px] max-w-xl leading-relaxed">
             Scan a barcode, search a brand, or look up a company. We'll resolve the legal entity and score its biodiversity impact in under thirty seconds.
           </p>
 
-          {/* Search capsule */}
           <div className="mt-9 bg-white rounded-2xl shadow-2xl p-1.5 border border-white/10">
             <div className="flex gap-1 p-1 bg-stone-50 rounded-xl">
               {([
@@ -179,6 +204,7 @@ export function ConsumerSearch() {
               ] as const).map(t => {
                 const Icon = t.icon;
                 const active = mode === t.id;
+
                 return (
                   <button
                     key={t.id}
@@ -192,7 +218,7 @@ export function ConsumerSearch() {
                 );
               })}
             </div>
-            
+
             <div className="flex items-center gap-2 p-2">
               <Search size={16} className="text-stone-400 ml-2" />
               <input
@@ -201,12 +227,14 @@ export function ConsumerSearch() {
                 placeholder={mode === 'barcode' ? '9 310072 011691' : mode === 'brand' ? 'e.g. Dairy Farmers, Tim Tam…' : 'Company name or ABN'}
                 className="flex-1 h-11 bg-transparent outline-none text-[14px] text-stone-800 placeholder:text-stone-400"
               />
-              <button onClick={resolve} className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]">
+              <button
+                onClick={resolve}
+                className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]"
+              >
                 Analyse <ArrowRight size={14} />
               </button>
             </div>
 
-            {/* Document Upload Area */}
             <div className="mx-2 mb-2 p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 group hover:bg-stone-100 hover:border-stone-300 transition-colors cursor-pointer text-center relative">
               <input type="file" accept=".pdf" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
               <div className="flex flex-col items-center justify-center gap-1.5 pointer-events-none">
@@ -219,7 +247,6 @@ export function ConsumerSearch() {
             </div>
           </div>
 
-          {/* Source line */}
           <div className="mt-6 pt-5 border-t border-white/15 flex flex-wrap items-center gap-x-8 gap-y-2 text-white/80">
             <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">INDEXED SOURCES</div>
             {['EPBC Act', 'ABR', 'CSIRO', 'TNFD', 'IUCN'].map(s => (
@@ -229,11 +256,9 @@ export function ConsumerSearch() {
         </div>
       </section>
 
-      {/* CONTENT */}
       <section className="max-w-5xl mx-auto px-8 py-14">
         {!resolved && (
           <div className="space-y-10">
-            {/* Trending */}
             <div>
               <div className="flex items-end justify-between mb-5">
                 <div>
@@ -242,6 +267,7 @@ export function ConsumerSearch() {
                   </div>
                   <h2 className="text-[22px] tracking-tight text-stone-900">What Australians are searching</h2>
                 </div>
+
                 <div className="hidden md:flex items-center gap-[3px] text-stone-300">
                   {Array.from({ length: 20 }).map((_, i) => (
                     <span key={i} className={`block w-px ${i % 4 === 0 ? 'h-2.5 bg-stone-400' : 'h-1.5 bg-stone-300'}`} />
@@ -252,13 +278,14 @@ export function ConsumerSearch() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {suggestions.map((s, i) => {
                   const color = s.score >= 65 ? 'text-rose-600' : s.score >= 45 ? 'text-amber-600' : 'text-emerald-600';
+
                   return (
                     <button
                       key={s.label}
                       onClick={() => {
-                        setMode("company");
+                        setMode('company');
                         setValue(s.abn);
-                        setTimeout(() => resolve(), 0);
+                        resolveWithValue('company', s.abn);
                       }}
                       className="group relative p-5 bg-white border border-stone-200 hover:border-emerald-400 hover:shadow-md rounded-2xl text-left transition"
                     >
@@ -276,7 +303,6 @@ export function ConsumerSearch() {
               </div>
             </div>
 
-            {/* Info split */}
             <div className="relative grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
                 { icon: ShieldCheck, title: 'Verified to ABR', text: 'Every brand is resolved to a real Australian Business Registry entity.' },
@@ -284,6 +310,7 @@ export function ConsumerSearch() {
                 { icon: Leaf, title: 'Plain English', text: 'We explain the score in three lines — no jargon, no greenwashing.' },
               ].map((f, i) => {
                 const Icon = f.icon;
+
                 return (
                   <div key={f.title} className="relative p-6 bg-white border border-stone-200 rounded-2xl overflow-hidden">
                     <TopoSvg className="absolute inset-0 w-full h-full text-emerald-800 pointer-events-none" />
@@ -311,22 +338,30 @@ export function ConsumerSearch() {
                 <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-100 to-blue-100 flex items-center justify-center">
                   <Leaf size={24} className="text-emerald-600" />
                 </div>
+
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Resolved entity</div>
                     <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
                   </div>
+
                   <div className="text-[18px] text-stone-900 mt-0.5 tracking-tight">{resolved.product}</div>
-                                  {resolved.imageUrl && (
-                  <img
-                    src={resolved.imageUrl}
-                    alt={resolved.product}
-                    className="mt-3 w-24 h-24 object-cover rounded-xl border border-stone-200"
-                  />
-                )}
-                  <div className="text-[13px] text-stone-600">Brand <span className="text-stone-900">{resolved.brand}</span> · Owned by <span className="text-stone-900">{resolved.parent}</span> · ABN {resolved.abn}</div>
-                  <div className="mt-2"><Confidence value={94} /></div>
+
+                  {resolved.imageUrl && (
+                    <img
+                      src={resolved.imageUrl}
+                      alt={resolved.product}
+                      className="mt-3 w-24 h-24 object-cover rounded-xl border border-stone-200"
+                    />
+                  )}
+
+                  <div className="text-[13px] text-stone-600">
+                    Brand <span className="text-stone-900">{resolved.brand}</span> · Owned by <span className="text-stone-900">{resolved.parent}</span> · ABN {resolved.abn}
+                  </div>
+
+                  <div className="mt-2"><Confidence value={resolved.score} /></div>
                 </div>
+
                 <button onClick={() => navigate('/app/overview')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm">
                   View full report <ArrowRight size={14} />
                 </button>
@@ -372,6 +407,7 @@ export function ConsumerSearch() {
                 </div>
                 <TrendingUp size={16} className="text-emerald-600" />
               </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {betterChoices.map((b, i) => (
                   <Card key={b.brand} className="p-5 hover:shadow-md transition">

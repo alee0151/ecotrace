@@ -1,31 +1,62 @@
 """
 EcoTrace Backend API
+====================
 
-Frontend user inputs:
-1. Barcode
-2. Brand
-3. Company / ABN
+Purpose
+-------
+This backend implements the consumer search pipeline for EcoTrace.
 
-Main endpoint:
+Consumer flow
+-------------
+The consumer flow is query_id based:
+- Consumers do not need to log in.
+- Each valid search creates exactly one search_query record.
+- The backend returns query_id to the frontend.
+- The report module can later use query_id to generate the risk report.
+
+Supported frontend inputs
+-------------------------
+Only ONE input type should be submitted per request:
+1. barcode
+2. brand
+3. company_or_abn
+
+Pipeline design
+---------------
+Company name / ABN:
+    User enters company name or ABN
+    -> ABR Web Services lookup / verification
+    -> return legal name, ABN, state, postcode, GST status, ABN status
+
+Barcode:
+    User scans / enters barcode
+    -> OpenFoodFacts lookup
+    -> extract product, brand and manufacturer
+    -> IP Australia Trade Mark Search API lookup using extracted brand
+    -> extract possible legal owner
+    -> ABR lookup by legal owner name if available
+
+Brand name:
+    User enters brand name
+    -> IP Australia Trade Mark Search API lookup
+    -> extract possible legal owner
+    -> ABR lookup by legal owner name if available
+
+Not included in this file
+-------------------------
+Report generation is intentionally not implemented here. The report team can
+use query_id and search_query records produced by this backend.
+
+Main endpoint
+-------------
 POST /api/search
-
-Resolution flow:
-- If barcode is provided:
-    1. Search local product database
-    2. If not found, call OpenFoodFacts barcode API
-- If brand is provided:
-    1. Search local brand database
-- If company_or_abn is provided:
-    1. If input is 11 digits, verify ABN using ABR API
-    2. Otherwise search local company database
-- Save every search into search_query table
 """
 
 import os
 import re
-from wsgiref import headers
+import time
 import xml.etree.ElementTree as ET
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 from uuid import UUID
 
 import requests
@@ -38,7 +69,7 @@ from pydantic import BaseModel
 
 
 # ============================================================
-# Load environment variables
+# Environment
 # ============================================================
 
 load_dotenv()
@@ -50,19 +81,16 @@ load_dotenv()
 
 app = FastAPI(
     title="EcoTrace Backend API",
-    version="2.0.0",
+    version="3.0.0",
     description="""
-EcoTrace backend for resolving consumer product input.
+EcoTrace consumer search API.
 
-Frontend can submit:
-- barcode
-- brand
-- company_or_abn
+This version follows the pipeline agreed by the team:
+- Company name / ABN -> ABR Web Services
+- Barcode -> OpenFoodFacts -> IP Australia Trade Mark Search -> ABR
+- Brand -> IP Australia Trade Mark Search -> ABR
 
-The backend will combine:
-- local database lookup
-- OpenFoodFacts barcode API
-- ABR ABN verification API
+Every valid search creates a query_id and stores one search_query record.
 """
 )
 
@@ -73,7 +101,7 @@ The backend will combine:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with frontend URL after deployment
+    allow_origins=["*"],  # Replace with frontend deployment URL in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,14 +114,14 @@ app.add_middleware(
 
 def get_conn():
     """
-    Create PostgreSQL database connection.
+    Create a PostgreSQL database connection.
 
     Required .env variables:
-    DB_HOST
-    DB_PORT
-    DB_NAME
-    DB_USER
-    DB_PASSWORD
+    - DB_HOST
+    - DB_PORT
+    - DB_NAME
+    - DB_USER
+    - DB_PASSWORD
     """
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -101,26 +129,23 @@ def get_conn():
         dbname=os.getenv("DB_NAME", "ecotrace"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD"),
-        cursor_factory=RealDictCursor
+        cursor_factory=RealDictCursor,
     )
 
 
 def serialize_row(row):
     """
-    Convert database row into JSON-safe dict.
-    UUID values must be converted into strings.
+    Convert a database row into a JSON-safe dictionary.
+
+    UUID values are converted into strings because UUID objects are not directly
+    JSON serializable.
     """
     if row is None:
         return None
 
     result = {}
-
     for key, value in row.items():
-        if isinstance(value, UUID):
-            result[key] = str(value)
-        else:
-            result[key] = value
-
+        result[key] = str(value) if isinstance(value, UUID) else value
     return result
 
 
@@ -130,16 +155,19 @@ def serialize_row(row):
 
 class SearchRequest(BaseModel):
     """
-    Main frontend request body.
+    Main frontend search request.
 
-    Frontend can send any one or multiple fields.
+    Exactly one of barcode, brand, or company_or_abn should be provided.
 
-    Example:
+    Consumer flow:
+    - user_id is optional and normally not required.
+    - query_id is generated by the backend for every valid search.
+
+    Example barcode request:
     {
-        "user_id": "optional-test-user-id",
-        "barcode": "9300605151255",
-        "brand": "Coles",
-        "company_or_abn": "Coles"
+        "barcode": "5449000000996",
+        "brand": "",
+        "company_or_abn": ""
     }
     """
     user_id: Optional[str] = None
@@ -150,42 +178,43 @@ class SearchRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     """
-    Create a test user for local development.
+    Optional development endpoint request.
+
+    This is kept for backward compatibility, but the current consumer search
+    flow does not require user_id.
     """
     email: str
     user_type: str = "consumer"
 
 
 # ============================================================
-# Utility Functions
+# Input Cleaning and Validation
 # ============================================================
 
 def clean_text(value: Optional[str]) -> Optional[str]:
     """
-    Clean frontend input.
+    Strip whitespace from frontend input.
+
+    Empty strings are normalized to None.
     """
     if value is None:
         return None
-
     value = value.strip()
-
-    if value == "":
-        return None
-
-    return value
+    return value if value else None
 
 
 def clean_abn(value: str) -> str:
     """
-    Remove spaces from ABN.
+    Remove spaces from an ABN input.
     """
-    return re.sub(r"\s+", "", value)
+    return re.sub(r"\s+", "", value or "")
 
 
 def is_abn(value: str) -> bool:
     """
     Check whether input looks like an ABN.
-    ABN must be 11 digits.
+
+    ABN must be exactly 11 digits.
     """
     value = clean_abn(value)
     return value.isdigit() and len(value) == 11
@@ -193,51 +222,180 @@ def is_abn(value: str) -> bool:
 
 def is_barcode(value: str) -> bool:
     """
-    Basic barcode validation.
-    Most retail barcodes are numeric and between 8 and 14 digits.
+    Basic retail barcode validation.
+
+    Most consumer product barcodes are numeric and between 8 and 14 digits.
     """
-    value = value.strip()
+    value = (value or "").strip()
     return value.isdigit() and 8 <= len(value) <= 14
 
 
+def get_single_input_type(
+    barcode: Optional[str],
+    brand: Optional[str],
+    company_or_abn: Optional[str],
+) -> Tuple[str, str, str]:
+    """
+    Validate that exactly one consumer input type is provided.
+
+    Returns:
+    - input_type: value compatible with search_query.input_type_enum
+    - input_value: value stored in search_query.input_value
+    - frontend_type: value returned to frontend
+
+    Database enum compatibility:
+    - barcode
+    - brand_name
+    - company_name
+
+    Note:
+    ABN is stored as company_name because the current input_type_enum does not
+    include a separate 'abn' value.
+    """
+    provided = []
+
+    if barcode:
+        provided.append(("barcode", barcode, "barcode"))
+    if brand:
+        provided.append(("brand_name", brand, "brand"))
+    if company_or_abn:
+        provided.append(("company_name", company_or_abn, "company_or_abn"))
+
+    if len(provided) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide exactly one input: barcode, brand, or company_or_abn.",
+        )
+
+    if len(provided) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Please submit only one input type per search.",
+        )
+
+    input_type, input_value, frontend_type = provided[0]
+
+    if input_type == "barcode" and not is_barcode(input_value):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid barcode. Barcode must be numeric and 8 to 14 digits long.",
+        )
+
+    if input_type == "brand_name" and len(input_value) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid brand name. Brand name must contain at least 2 characters.",
+        )
+
+    if input_type == "company_name":
+        cleaned = clean_abn(input_value)
+        if cleaned.isdigit() and not is_abn(cleaned):
+            raise HTTPException(status_code=400, detail="Invalid ABN. ABN must be 11 digits.")
+        if not cleaned.isdigit() and len(input_value) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid company name. Company name must contain at least 2 characters.",
+            )
+
+    return input_type, input_value, frontend_type
+
+
 # ============================================================
-# External API: ABR ABN Verification
+# search_query Lifecycle
+# ============================================================
+
+def create_search_query(cur, input_type: str, input_value: str, user_id: Optional[str] = None):
+    """
+    Create a search_query record before calling external APIs.
+
+    This guarantees every valid consumer search has a query_id even before
+    resolution is complete.
+
+    Initial status:
+    - pending
+
+    Later update_search_query changes the status to:
+    - resolved
+    - failed
+    """
+    cur.execute(
+        """
+        INSERT INTO search_query (
+            user_id,
+            input_type,
+            input_value,
+            resolution_status
+        )
+        VALUES (%s, %s, %s, 'pending')
+        RETURNING query_id, submitted_at;
+        """,
+        (user_id, input_type, input_value),
+    )
+    return cur.fetchone()
+
+
+def update_search_query(
+    cur,
+    query_id,
+    status: str,
+    resolved_company_id: Optional[str] = None,
+    resolved_brand_id: Optional[str] = None,
+    resolved_product_id: Optional[str] = None,
+):
+    """
+    Update search_query after the pipeline finishes.
+
+    The database enum supports:
+    - pending
+    - resolved
+    - failed
+
+    This function only writes database-safe status values.
+    """
+    if status not in ["resolved", "failed"]:
+        status = "failed"
+
+    cur.execute(
+        """
+        UPDATE search_query
+        SET
+            resolution_status = %s,
+            resolved_company_id = %s,
+            resolved_brand_id = %s,
+            resolved_product_id = %s
+        WHERE query_id = %s;
+        """,
+        (status, resolved_company_id, resolved_brand_id, resolved_product_id, query_id),
+    )
+
+
+# ============================================================
+# ABR Web Services
 # ============================================================
 
 def verify_abn_with_abr(abn: str) -> Dict[str, Any]:
     """
-    Verify an ABN using ABR Web Services.
+    Verify an ABN using ABR Web Services SearchByABN.
 
     Required .env:
-    ABR_GUID
+    - ABR_GUID
 
-    Returns a structured ABN result.
+    Returns structured company information when found.
     """
-
     guid = os.getenv("ABR_GUID")
 
     if not guid:
-        return {
-            "success": False,
-            "source": "ABR",
-            "message": "ABR_GUID is missing in .env"
-        }
+        return {"success": False, "source": "ABR", "message": "ABR_GUID is missing in .env"}
 
     abn = clean_abn(abn)
-
     if not is_abn(abn):
-        return {
-            "success": False,
-            "source": "ABR",
-            "message": "Invalid ABN format. ABN must be 11 digits."
-        }
+        return {"success": False, "source": "ABR", "message": "Invalid ABN format. ABN must be 11 digits."}
 
     url = "https://abr.business.gov.au/abrxmlsearch/AbrXmlSearch.asmx/SearchByABNv202001"
-
     params = {
         "searchString": abn,
         "includeHistoricalDetails": "N",
-        "authenticationGuid": guid
+        "authenticationGuid": guid,
     }
 
     try:
@@ -245,10 +403,7 @@ def verify_abn_with_abr(abn: str) -> Dict[str, Any]:
         response.raise_for_status()
 
         root = ET.fromstring(response.text)
-
-        ns = {
-            "abr": "http://abr.business.gov.au/ABRXMLSearch/"
-        }
+        ns = {"abr": "http://abr.business.gov.au/ABRXMLSearch/"}
 
         abn_node = root.find(".//abr:identifierValue", ns)
         name_node = root.find(".//abr:organisationName", ns)
@@ -258,11 +413,7 @@ def verify_abn_with_abr(abn: str) -> Dict[str, Any]:
         gst_node = root.find(".//abr:goodsAndServicesTax", ns)
 
         if abn_node is None:
-            return {
-                "success": False,
-                "source": "ABR",
-                "message": "ABN not found"
-            }
+            return {"success": False, "source": "ABR", "message": "ABN not found"}
 
         return {
             "success": True,
@@ -273,58 +424,117 @@ def verify_abn_with_abr(abn: str) -> Dict[str, Any]:
             "postcode": postcode_node.text if postcode_node is not None else None,
             "abn_status": status_node.text if status_node is not None else None,
             "gst_registered": gst_node is not None,
-            "verified": True
+            "verified": True,
         }
 
     except Exception as e:
+        return {"success": False, "source": "ABR", "message": str(e)}
+
+
+def search_company_name_with_abr(company_name: str) -> Dict[str, Any]:
+    """
+    Search ABR by company/business name.
+
+    Pipeline use:
+    - User enters company name directly
+    - Trademark API returns a legal owner name
+
+    Required .env:
+    - ABR_GUID
+
+    This uses ABRSearchByNameAdvancedSimpleProtocol2017 and returns the first
+    matching business entity when available.
+    """
+    guid = os.getenv("ABR_GUID")
+
+    if not guid:
+        return {"success": False, "source": "ABR", "message": "ABR_GUID is missing in .env"}
+
+    if not company_name or len(company_name.strip()) < 2:
+        return {"success": False, "source": "ABR", "message": "Company name is too short"}
+
+    url = "https://abr.business.gov.au/abrxmlsearch/AbrXmlSearch.asmx/ABRSearchByNameAdvancedSimpleProtocol2017"
+    params = {
+        "name": company_name.strip(),
+        "postcode": "",
+        "legalName": "Y",
+        "tradingName": "Y",
+        "NSW": "Y",
+        "SA": "Y",
+        "ACT": "Y",
+        "VIC": "Y",
+        "WA": "Y",
+        "NT": "Y",
+        "QLD": "Y",
+        "TAS": "Y",
+        "authenticationGuid": guid,
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+        root = ET.fromstring(response.text)
+        ns = {"abr": "http://abr.business.gov.au/ABRXMLSearch/"}
+
+        business = root.find(".//abr:businessEntity", ns)
+        if business is None:
+            return {"success": False, "source": "ABR", "message": "No company found from ABR"}
+
+        abn_node = business.find(".//abr:identifierValue", ns)
+        name_node = business.find(".//abr:organisationName", ns)
+        state_node = business.find(".//abr:stateCode", ns)
+        postcode_node = business.find(".//abr:postcode", ns)
+        status_node = business.find(".//abr:entityStatusCode", ns)
+
         return {
-            "success": False,
+            "success": True,
             "source": "ABR",
-            "message": str(e)
+            "abn": abn_node.text if abn_node is not None else None,
+            "legal_name": name_node.text if name_node is not None else company_name,
+            "state": state_node.text if state_node is not None else None,
+            "postcode": postcode_node.text if postcode_node is not None else None,
+            "abn_status": status_node.text if status_node is not None else None,
+            "verified": abn_node is not None,
         }
+
+    except Exception as e:
+        return {"success": False, "source": "ABR", "message": str(e)}
 
 
 # ============================================================
-# External API: OpenFoodFacts Barcode Lookup
+# OpenFoodFacts Barcode Lookup
 # ============================================================
 
 def lookup_barcode_openfoodfacts(barcode: str) -> Dict[str, Any]:
     """
     Look up product information from OpenFoodFacts.
 
-    This is useful when local product database is empty.
+    Pipeline use:
+    - Barcode input
+    - Extract product name, brand, manufacturer, image, and categories
 
-    No API key is required.
+    OpenFoodFacts can reject requests without a User-Agent header, so a
+    project-specific User-Agent is included.
     """
-
     if not is_barcode(barcode):
-        return {
-            "success": False,
-            "source": "OpenFoodFacts",
-            "message": "Invalid barcode format"
-        }
+        return {"success": False, "source": "OpenFoodFacts", "message": "Invalid barcode format"}
 
     url = f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
+    headers = {
+        "User-Agent": "EcoTrace-App/1.0 (student project)",
+        "Accept": "application/json",
+    }
 
     try:
-        headers = {
-    "User-Agent": "EcoTrace-App/1.0 (student project)"
-}
-
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-
         data = response.json()
 
         if data.get("status") != 1:
-            return {
-                "success": False,
-                "source": "OpenFoodFacts",
-                "message": "Product not found"
-            }
+            return {"success": False, "source": "OpenFoodFacts", "message": "Product not found"}
 
         product = data.get("product", {})
-
         return {
             "success": True,
             "source": "OpenFoodFacts",
@@ -333,159 +543,237 @@ def lookup_barcode_openfoodfacts(barcode: str) -> Dict[str, Any]:
             "brand": product.get("brands"),
             "manufacturer": product.get("manufacturing_places"),
             "categories": product.get("categories"),
-            "image_url": product.get("image_url")
+            "image_url": product.get("image_url"),
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "source": "OpenFoodFacts",
-            "message": str(e)
-        }
+        return {"success": False, "source": "OpenFoodFacts", "message": str(e)}
 
 
 # ============================================================
-# Local Database Lookup
+# IP Australia Trade Mark Search API
 # ============================================================
 
-def search_local_product(cur, barcode: str):
-    """
-    Search product by barcode from local database.
-    """
-    cur.execute("""
-        SELECT
-            p.product_id,
-            p.barcode,
-            p.product_name,
-            p.manufacturer_name,
-            p.data_source,
-            b.brand_id,
-            b.brand_name,
-            c.company_id,
-            c.legal_name,
-            c.abn,
-            c.company_status,
-            c.anzsic_code
-        FROM product p
-        LEFT JOIN brand b ON p.brand_id = b.brand_id
-        LEFT JOIN company c ON b.company_id = c.company_id
-        WHERE p.barcode = %s
-        LIMIT 1;
-    """, (barcode,))
-
-    return cur.fetchone()
+_IP_AUS_TOKEN_CACHE = {
+    "access_token": None,
+    "expires_at": 0,
+}
 
 
-def search_local_brand(cur, brand: str):
-    """
-    Search brand from local database.
-    """
-    cur.execute("""
-        SELECT
-            b.brand_id,
-            b.brand_name,
-            c.company_id,
-            c.legal_name,
-            c.abn,
-            c.company_status,
-            c.anzsic_code
-        FROM brand b
-        LEFT JOIN company c ON b.company_id = c.company_id
-        WHERE b.brand_name ILIKE %s
-        LIMIT 1;
-    """, (f"%{brand}%",))
+def get_ip_australia_access_token() -> Optional[str]:
+    now = int(time.time())
+    cached_token = _IP_AUS_TOKEN_CACHE.get("access_token")
+    expires_at = int(_IP_AUS_TOKEN_CACHE.get("expires_at") or 0)
 
-    return cur.fetchone()
+    if cached_token and now < expires_at - 60:
+        return cached_token
 
+    client_id = (os.getenv("IP_AUSTRALIA_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("IP_AUSTRALIA_CLIENT_SECRET") or "").strip()
 
-def search_local_company(cur, company_name: str):
-    """
-    Search company by legal name from local database.
-    """
-    cur.execute("""
-        SELECT
-            company_id,
-            abn,
-            acn,
-            legal_name,
-            entity_type,
-            company_status,
-            anzsic_code
-        FROM company
-        WHERE legal_name ILIKE %s
-        LIMIT 1;
-    """, (f"%{company_name}%",))
-
-    return cur.fetchone()
-
-
-def search_local_company_by_abn(cur, abn: str):
-    """
-    Search company by ABN from local database.
-    """
-    cur.execute("""
-        SELECT
-            company_id,
-            abn,
-            acn,
-            legal_name,
-            entity_type,
-            company_status,
-            anzsic_code
-        FROM company
-        WHERE abn = %s
-        LIMIT 1;
-    """, (abn,))
-
-    return cur.fetchone()
-
-
-# ============================================================
-# Search Logging
-# ============================================================
-
-def log_search(
-    cur,
-    user_id: Optional[str],
-    input_type: str,
-    input_value: str,
-    resolution_status: str,
-    resolved_company_id: Optional[str] = None,
-    resolved_brand_id: Optional[str] = None,
-    resolved_product_id: Optional[str] = None
-):
-    """
-    Save search query into search_query table.
-
-    If user_id is None, search is still processed but not logged.
-    """
-
-    if not user_id:
+    if not client_id or not client_secret:
+        print("IP Australia token error: missing client_id or client_secret")
         return None
 
-    cur.execute("""
-        INSERT INTO search_query (
-            user_id,
-            input_type,
-            input_value,
-            resolution_status,
-            resolved_company_id,
-            resolved_brand_id,
-            resolved_product_id
+    token_url = (
+        os.getenv(
+            "IP_AUSTRALIA_TOKEN_URL",
+            "https://test.api.ipaustralia.gov.au/public/external-token-api/v1/access_token",
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING query_id, submitted_at;
-    """, (
-        user_id,
-        input_type,
-        input_value,
-        resolution_status,
-        resolved_company_id,
-        resolved_brand_id,
-        resolved_product_id
-    ))
+        or ""
+    ).strip()
 
-    return cur.fetchone()
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+
+    form_data = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+    try:
+        response = requests.post(
+            token_url,
+            headers=headers,
+            data=form_data,
+            timeout=20,
+        )
+
+        if not response.ok:
+            print("IP Australia token error status:", response.status_code)
+            print("IP Australia token error body:", response.text)
+            print("Token URL:", token_url)
+            print("Client ID starts with:", client_id[:6])
+            return None
+
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+        expires_in = int(token_data.get("expires_in", 3600))
+
+        if not access_token:
+            print("IP Australia token error: no access_token in response")
+            print("Response JSON:", token_data)
+            return None
+
+        _IP_AUS_TOKEN_CACHE["access_token"] = access_token
+        _IP_AUS_TOKEN_CACHE["expires_at"] = now + expires_in
+
+        return access_token
+
+    except Exception as e:
+        print("IP Australia token exception:", repr(e))
+        return None
+
+
+def extract_first_legal_owner_from_trademark(raw_data: Any) -> Optional[str]:
+    """
+    Best-effort extraction of legal owner / applicant name from IP Australia data.
+
+    The exact response shape can vary, so this function checks multiple common
+    fields recursively:
+    - owner
+    - owners
+    - applicant
+    - applicants
+    - holder
+    - name
+    - organisationName
+
+    If no owner-like value is found, None is returned.
+    """
+    owner_keys = {
+        "owner",
+        "owners",
+        "applicant",
+        "applicants",
+        "holder",
+        "holders",
+        "legalOwner",
+        "legal_owner",
+        "organisationName",
+        "organizationName",
+    }
+
+    def recursive_find(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in owner_keys:
+                    if isinstance(child, str) and child.strip():
+                        return child.strip()
+                    if isinstance(child, list) and child:
+                        found = recursive_find(child[0])
+                        if found:
+                            return found
+                    if isinstance(child, dict):
+                        found = recursive_find(child)
+                        if found:
+                            return found
+
+            # Many APIs store names under generic 'name' fields inside owner/applicant objects.
+            if "name" in value and isinstance(value["name"], str) and value["name"].strip():
+                return value["name"].strip()
+
+            for child in value.values():
+                found = recursive_find(child)
+                if found:
+                    return found
+
+        if isinstance(value, list):
+            for item in value:
+                found = recursive_find(item)
+                if found:
+                    return found
+
+        return None
+
+    return recursive_find(raw_data)
+
+
+def search_trademark_ip_australia(brand_name: str) -> Dict[str, Any]:
+    """
+    Search IP Australia Trade Mark Search API by brand name.
+
+    Pipeline use:
+    - Brand input -> Trade Mark API -> possible legal owner
+    - Barcode input -> OpenFoodFacts extracts brand -> Trade Mark API -> possible legal owner
+
+    Required .env variables for live API:
+    - IP_AUSTRALIA_CLIENT_ID
+    - IP_AUSTRALIA_CLIENT_SECRET
+
+    If OAuth credentials are missing or the live API fails, the function returns
+    success=False with a clear message. The search_query will still be created
+    and updated by /api/search.
+    """
+    base_url = os.getenv(
+    "IP_AUSTRALIA_TRADEMARK_URL",
+    "https://test.api.ipaustralia.gov.au/public/australian-trade-mark-search-api/v1",
+    ).rstrip("/")
+
+    access_token = get_ip_australia_access_token()
+    if not access_token:
+        return {
+            "success": False,
+            "source": "IP Australia Trade Mark Search API",
+            "message": "Unable to obtain IP Australia OAuth access token. Check client ID and client secret.",
+        }
+
+    url = f"{base_url}/search/quick"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "EcoTrace-App/1.0 (student project)",
+    }
+
+    # Based on the quick search documentation: users can search by query, type, status,
+    # and updated-since criteria. Keep the payload minimal first for compatibility.
+    payload = {
+        "query": brand_name,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+
+        if response.status_code >= 400:
+            return {
+                "success": False,
+                "source": "IP Australia Trade Mark Search API",
+                "status_code": response.status_code,
+                "message": response.text,
+            }
+
+        data = response.json()
+        legal_owner = extract_first_legal_owner_from_trademark(data)
+
+        return {
+            "success": True,
+            "source": "IP Australia Trade Mark Search API",
+            "brand": brand_name,
+            "legal_owner": legal_owner,
+            "raw": data,
+        }
+
+    except Exception as e:
+        return {"success": False, "source": "IP Australia Trade Mark Search API", "message": str(e)}
+
+
+# ============================================================
+# Pipeline Helper
+# ============================================================
+
+def verify_owner_with_abr(owner_name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Verify a legal owner name with ABR name search when possible.
+
+    If owner_name is missing, returns None rather than failing the whole pipeline.
+    """
+    if not owner_name:
+        return None
+    return search_company_name_with_abr(owner_name)
 
 
 # ============================================================
@@ -499,7 +787,9 @@ def root():
     """
     return {
         "message": "EcoTrace backend is running",
-        "main_endpoint": "POST /api/search"
+        "main_endpoint": "POST /api/search",
+        "consumer_flow": "query_id based",
+        "version": "3.0.0",
     }
 
 
@@ -508,13 +798,11 @@ def health():
     """
     Health check endpoint.
     """
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
 
 
 # ============================================================
-# Test User Endpoint
+# Development User Endpoint
 # ============================================================
 
 @app.post("/api/users/test")
@@ -522,31 +810,27 @@ def create_test_user(payload: CreateUserRequest):
     """
     Create or reuse a test user.
 
-    Useful for frontend local testing because search history needs user_id.
+    This endpoint is kept for development/backward compatibility. The current
+    consumer search pipeline does not require user_id.
     """
-
     conn = get_conn()
     cur = conn.cursor()
 
     try:
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO "user" (user_type, email)
             VALUES (%s, %s)
             ON CONFLICT (email)
             DO UPDATE SET email = EXCLUDED.email
             RETURNING user_id, user_type, email, created_at;
-        """, (
-            payload.user_type,
-            payload.email
-        ))
+            """,
+            (payload.user_type, payload.email),
+        )
 
         user = cur.fetchone()
         conn.commit()
-
-        return {
-            "message": "User ready",
-            "user": serialize_row(user)
-        }
+        return {"message": "User ready", "user": serialize_row(user)}
 
     except Exception as e:
         conn.rollback()
@@ -564,306 +848,189 @@ def create_test_user(payload: CreateUserRequest):
 @app.post("/api/search")
 def search_entity(payload: SearchRequest):
     """
-    Main endpoint for frontend.
+    Main consumer search endpoint.
 
-    Frontend input fields:
-    - barcode
-    - brand
-    - company_or_abn
+    Responsibilities:
+    1. Validate exactly one frontend input.
+    2. Create search_query and return query_id.
+    3. Execute the pipeline according to input type.
+    4. Update search_query to resolved or failed.
+    5. Return a unified response to the frontend.
 
-    The backend returns a unified result object so frontend can display it easily.
+    This endpoint does not perform report generation.
     """
-
     barcode = clean_text(payload.barcode)
     brand = clean_text(payload.brand)
     company_or_abn = clean_text(payload.company_or_abn)
 
-    if not barcode and not brand and not company_or_abn:
-        raise HTTPException(
-            status_code=400,
-            detail="Please provide barcode, brand, or company_or_abn"
-        )
+    input_type, input_value, frontend_type = get_single_input_type(barcode, brand, company_or_abn)
 
     conn = get_conn()
     cur = conn.cursor()
 
-    results = []
-
     try:
-        # ----------------------------------------------------
-        # 1. Barcode flow
-        # ----------------------------------------------------
-        if barcode:
-            local_product = search_local_product(cur, barcode)
+        query = create_search_query(
+            cur,
+            input_type=input_type,
+            input_value=input_value,
+            user_id=payload.user_id,
+        )
+        query_id = query["query_id"]
 
-            if local_product:
-                product = serialize_row(local_product)
-
-                result = {
-                    "input_type": "barcode",
-                    "input_value": barcode,
-                    "status": "resolved",
-                    "source": "local_database",
-                    "product": {
-                        "product_id": product.get("product_id"),
-                        "barcode": product.get("barcode"),
-                        "product_name": product.get("product_name"),
-                        "manufacturer_name": product.get("manufacturer_name"),
-                        "data_source": product.get("data_source")
-                    },
-                    "brand": {
-                        "brand_id": product.get("brand_id"),
-                        "brand_name": product.get("brand_name")
-                    },
-                    "company": {
-                        "company_id": product.get("company_id"),
-                        "legal_name": product.get("legal_name"),
-                        "abn": product.get("abn"),
-                        "company_status": product.get("company_status"),
-                        "industry": product.get("anzsic_code")
-                    },
-                    "confidence": 90
-                }
-
-                log_search(
-                    cur,
-                    payload.user_id,
-                    "barcode",
-                    barcode,
-                    "resolved",
-                    product.get("company_id"),
-                    product.get("brand_id"),
-                    product.get("product_id")
-                )
-
-            else:
-                external_product = lookup_barcode_openfoodfacts(barcode)
-
-                result = {
-                    "input_type": "barcode",
-                    "input_value": barcode,
-                    "status": "external_resolved" if external_product.get("success") else "not_found",
-                    "source": external_product.get("source"),
-                    "product": {
-                        "barcode": barcode,
-                        "product_name": external_product.get("product_name"),
-                        "image_url": external_product.get("image_url"),
-                        "categories": external_product.get("categories")
-                    },
-                    "brand": {
-                        "brand_name": external_product.get("brand")
-                    },
-                    "company": {
-                        "manufacturer": external_product.get("manufacturer")
-                    },
-                    "message": external_product.get("message"),
-                    "confidence": 65 if external_product.get("success") else 0
-                }
-
-                log_search(
-                    cur,
-                    payload.user_id,
-                    "barcode",
-                    barcode,
-                    result["status"]
-                )
-
-            results.append(result)
+        pipeline_steps: List[str] = []
+        result: Dict[str, Any] = {}
+        db_status = "failed"
 
         # ----------------------------------------------------
-        # 2. Brand flow
+        # 1. Company name / ABN flow
         # ----------------------------------------------------
-        if brand:
-            local_brand = search_local_brand(cur, brand)
-
-            if local_brand:
-                brand_row = serialize_row(local_brand)
-
-                abn_verification = None
-                if brand_row.get("abn"):
-                    abn_verification = verify_abn_with_abr(brand_row.get("abn"))
-
-                result = {
-                    "input_type": "brand",
-                    "input_value": brand,
-                    "status": "resolved",
-                    "source": "local_database",
-                    "brand": {
-                        "brand_id": brand_row.get("brand_id"),
-                        "brand_name": brand_row.get("brand_name")
-                    },
-                    "company": {
-                        "company_id": brand_row.get("company_id"),
-                        "legal_name": brand_row.get("legal_name"),
-                        "abn": brand_row.get("abn"),
-                        "company_status": brand_row.get("company_status"),
-                        "industry": brand_row.get("anzsic_code")
-                    },
-                    "abn_verification": abn_verification,
-                    "confidence": 85
-                }
-
-                log_search(
-                    cur,
-                    payload.user_id,
-                    "brand_name",
-                    brand,
-                    "resolved",
-                    brand_row.get("company_id"),
-                    brand_row.get("brand_id")
-                )
-
-            else:
-                result = {
-                    "input_type": "brand",
-                    "input_value": brand,
-                    "status": "not_found",
-                    "source": "local_database",
-                    "message": "Brand not found in local database. Add brand-company mapping data or search by ABN.",
-                    "confidence": 0
-                }
-
-                log_search(
-                    cur,
-                    payload.user_id,
-                    "brand_name",
-                    brand,
-                    "not_found"
-                )
-
-            results.append(result)
-
-        # ----------------------------------------------------
-        # 3. Company / ABN flow
-        # ----------------------------------------------------
-        if company_or_abn:
+        if input_type == "company_name":
             if is_abn(company_or_abn):
                 abn = clean_abn(company_or_abn)
+                pipeline_steps.append("ABR ABN verification")
+                abn_result = verify_abn_with_abr(abn)
+                db_status = "resolved" if abn_result.get("success") else "failed"
 
-                local_company = search_local_company_by_abn(cur, abn)
-                abn_verification = verify_abn_with_abr(abn)
-
-                if local_company:
-                    company = serialize_row(local_company)
-
-                    result = {
-                        "input_type": "abn",
-                        "input_value": abn,
-                        "status": "resolved",
-                        "source": "local_database_and_ABR",
-                        "company": {
-                            "company_id": company.get("company_id"),
-                            "legal_name": company.get("legal_name"),
-                            "abn": company.get("abn"),
-                            "acn": company.get("acn"),
-                            "entity_type": company.get("entity_type"),
-                            "company_status": company.get("company_status"),
-                            "industry": company.get("anzsic_code")
-                        },
-                        "abn_verification": abn_verification,
-                        "confidence": 95
-                    }
-
-                    log_search(
-                        cur,
-                        payload.user_id,
-                        "abn",
-                        abn,
-                        "resolved",
-                        company.get("company_id")
-                    )
-
-                else:
-                    result = {
-                        "input_type": "abn",
-                        "input_value": abn,
-                        "status": "external_resolved" if abn_verification.get("success") else "not_found",
-                        "source": "ABR",
-                        "company": {
-                            "legal_name": abn_verification.get("legal_name"),
-                            "abn": abn_verification.get("abn"),
-                            "state": abn_verification.get("state"),
-                            "postcode": abn_verification.get("postcode"),
-                            "abn_status": abn_verification.get("abn_status"),
-                            "gst_registered": abn_verification.get("gst_registered")
-                        },
-                        "abn_verification": abn_verification,
-                        "message": abn_verification.get("message"),
-                        "confidence": 90 if abn_verification.get("success") else 0
-                    }
-
-                    log_search(
-                        cur,
-                        payload.user_id,
-                        "abn",
-                        abn,
-                        result["status"]
-                    )
+                result = {
+                    "input_type": "abn",
+                    "input_value": abn,
+                    "status": "external_resolved" if abn_result.get("success") else "not_found",
+                    "source": "ABR",
+                    "company": {
+                        "legal_name": abn_result.get("legal_name"),
+                        "abn": abn_result.get("abn"),
+                        "state": abn_result.get("state"),
+                        "postcode": abn_result.get("postcode"),
+                        "abn_status": abn_result.get("abn_status"),
+                        "gst_registered": abn_result.get("gst_registered"),
+                    },
+                    "abn_verification": abn_result,
+                    "confidence": 95 if abn_result.get("success") else 0,
+                }
 
             else:
-                local_company = search_local_company(cur, company_or_abn)
+                pipeline_steps.append("ABR company name lookup")
+                abr_name_result = search_company_name_with_abr(company_or_abn)
+                db_status = "resolved" if abr_name_result.get("success") else "failed"
 
-                if local_company:
-                    company = serialize_row(local_company)
+                result = {
+                    "input_type": "company_name",
+                    "input_value": company_or_abn,
+                    "status": "external_resolved" if abr_name_result.get("success") else "not_found",
+                    "source": "ABR",
+                    "company": {
+                        "legal_name": abr_name_result.get("legal_name"),
+                        "abn": abr_name_result.get("abn"),
+                        "state": abr_name_result.get("state"),
+                        "postcode": abr_name_result.get("postcode"),
+                        "abn_status": abr_name_result.get("abn_status"),
+                    },
+                    "abn_verification": abr_name_result,
+                    "message": abr_name_result.get("message"),
+                    "confidence": 90 if abr_name_result.get("success") else 0,
+                }
 
-                    abn_verification = None
-                    if company.get("abn"):
-                        abn_verification = verify_abn_with_abr(company.get("abn"))
+            update_search_query(cur, query_id, db_status)
 
-                    result = {
-                        "input_type": "company_name",
-                        "input_value": company_or_abn,
-                        "status": "resolved",
-                        "source": "local_database",
-                        "company": {
-                            "company_id": company.get("company_id"),
-                            "legal_name": company.get("legal_name"),
-                            "abn": company.get("abn"),
-                            "acn": company.get("acn"),
-                            "entity_type": company.get("entity_type"),
-                            "company_status": company.get("company_status"),
-                            "industry": company.get("anzsic_code")
-                        },
-                        "abn_verification": abn_verification,
-                        "confidence": 85
-                    }
+        # ----------------------------------------------------
+        # 2. Barcode flow
+        # ----------------------------------------------------
+        elif input_type == "barcode":
+            pipeline_steps.append("OpenFoodFacts barcode lookup")
+            product_result = lookup_barcode_openfoodfacts(barcode)
 
-                    log_search(
-                        cur,
-                        payload.user_id,
-                        "company_name",
-                        company_or_abn,
-                        "resolved",
-                        company.get("company_id")
-                    )
+            extracted_brand = None
+            if product_result.get("success"):
+                extracted_brand = product_result.get("brand")
 
-                else:
-                    result = {
-                        "input_type": "company_name",
-                        "input_value": company_or_abn,
-                        "status": "not_found",
-                        "source": "local_database",
-                        "message": "Company name not found in local database. For stronger verification, ask user to enter ABN.",
-                        "confidence": 0
-                    }
+            trademark_result = None
+            owner_name = None
+            abr_owner_result = None
 
-                    log_search(
-                        cur,
-                        payload.user_id,
-                        "company_name",
-                        company_or_abn,
-                        "not_found"
-                    )
+            if extracted_brand:
+                first_brand = extracted_brand.split(",")[0].strip()
+                pipeline_steps.append("IP Australia Trade Mark Search using extracted brand")
+                trademark_result = search_trademark_ip_australia(first_brand)
+                owner_name = trademark_result.get("legal_owner") if trademark_result else None
 
-            results.append(result)
+                if owner_name:
+                    pipeline_steps.append("ABR company name lookup using trademark legal owner")
+                    abr_owner_result = verify_owner_with_abr(owner_name)
+
+            db_status = "resolved" if product_result.get("success") else "failed"
+
+            result = {
+                "input_type": "barcode",
+                "input_value": barcode,
+                "status": "external_resolved" if product_result.get("success") else "not_found",
+                "source": "OpenFoodFacts + IP Australia + ABR",
+                "product": {
+                    "barcode": barcode,
+                    "product_name": product_result.get("product_name"),
+                    "image_url": product_result.get("image_url"),
+                    "categories": product_result.get("categories"),
+                },
+                "brand": {
+                    "brand_name": extracted_brand,
+                },
+                "manufacturer": product_result.get("manufacturer"),
+                "trademark": trademark_result,
+                "legal_owner": owner_name,
+                "abn_verification": abr_owner_result,
+                "message": product_result.get("message"),
+                "confidence": 75 if product_result.get("success") else 0,
+            }
+
+            update_search_query(cur, query_id, db_status)
+
+        # ----------------------------------------------------
+        # 3. Brand flow
+        # ----------------------------------------------------
+        elif input_type == "brand_name":
+            pipeline_steps.append("IP Australia Trade Mark Search")
+            trademark_result = search_trademark_ip_australia(brand)
+            owner_name = trademark_result.get("legal_owner") if trademark_result else None
+            abr_owner_result = None
+
+            if owner_name:
+                pipeline_steps.append("ABR company name lookup using trademark legal owner")
+                abr_owner_result = verify_owner_with_abr(owner_name)
+
+            # The brand pipeline is considered resolved when trademark lookup succeeds.
+            db_status = "resolved" if trademark_result.get("success") else "failed"
+
+            result = {
+                "input_type": "brand",
+                "input_value": brand,
+                "status": "external_resolved" if trademark_result.get("success") else "not_found",
+                "source": "IP Australia + ABR",
+                "brand": {
+                    "brand_name": brand,
+                },
+                "trademark": trademark_result,
+                "legal_owner": owner_name,
+                "abn_verification": abr_owner_result,
+                "message": trademark_result.get("message"),
+                "confidence": 80 if trademark_result.get("success") else 0,
+            }
+
+            update_search_query(cur, query_id, db_status)
 
         conn.commit()
 
         return {
+            "query_id": str(query_id),
             "status": "success",
-            "total_results": len(results),
-            "results": results
+            "input_type": frontend_type,
+            "input_value": input_value,
+            "resolution_status": db_status,
+            "pipeline_steps": pipeline_steps,
+            "result": result,
         }
+
+    except HTTPException:
+        conn.rollback()
+        raise
 
     except Exception as e:
         conn.rollback()
@@ -875,7 +1042,7 @@ def search_entity(payload: SearchRequest):
 
 
 # ============================================================
-# Standalone ABN Endpoint
+# Standalone Test Endpoints
 # ============================================================
 
 @app.get("/api/abn/verify/{abn}")
@@ -884,17 +1051,26 @@ def verify_abn(abn: str):
     Verify ABN directly.
 
     Example:
-    GET /api/abn/verify/12345678901
+    GET /api/abn/verify/88000014675
     """
     if not is_abn(abn):
         raise HTTPException(status_code=400, detail="ABN must be 11 digits")
-
     return verify_abn_with_abr(abn)
 
 
-# ============================================================
-# Standalone Barcode Endpoint
-# ============================================================
+@app.get("/api/company/search/{company_name}")
+def lookup_company_name(company_name: str):
+    """
+    Search company name directly through ABR.
+
+    Example:
+    GET /api/company/search/Coles
+    """
+    cleaned_name = clean_text(company_name)
+    if not cleaned_name or len(cleaned_name) < 2:
+        raise HTTPException(status_code=400, detail="Company name must contain at least 2 characters")
+    return search_company_name_with_abr(cleaned_name)
+
 
 @app.get("/api/barcode/{barcode}")
 def lookup_barcode(barcode: str):
@@ -902,12 +1078,38 @@ def lookup_barcode(barcode: str):
     Lookup barcode directly using OpenFoodFacts.
 
     Example:
-    GET /api/barcode/9300605151255
+    GET /api/barcode/5449000000996
     """
     if not is_barcode(barcode):
         raise HTTPException(status_code=400, detail="Invalid barcode")
-
     return lookup_barcode_openfoodfacts(barcode)
+
+
+@app.get("/api/trademark/token-test")
+def test_ip_australia_token():
+    """
+    Test IP Australia OAuth token retrieval.
+
+    This endpoint only returns a token preview, not the full token.
+    """
+    token = get_ip_australia_access_token()
+    if not token:
+        return {"status": "error", "message": "Unable to obtain token"}
+    return {"status": "success", "token_preview": token[:20]}
+
+
+@app.get("/api/trademark/search/{brand}")
+def lookup_trademark(brand: str):
+    """
+    Test IP Australia Trade Mark Search API directly.
+
+    Example:
+    GET /api/trademark/search/Coles
+    """
+    cleaned_brand = clean_text(brand)
+    if not cleaned_brand or len(cleaned_brand) < 2:
+        raise HTTPException(status_code=400, detail="Brand must contain at least 2 characters")
+    return search_trademark_ip_australia(cleaned_brand)
 
 
 # ============================================================
@@ -918,13 +1120,16 @@ def lookup_barcode(barcode: str):
 def get_search_history(user_id: str):
     """
     Get search history for a user.
-    """
 
+    Kept for compatibility with user_id-based flows. The current consumer flow
+    mainly uses query_id returned by /api/search.
+    """
     conn = get_conn()
     cur = conn.cursor()
 
     try:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 query_id,
                 input_type,
@@ -937,14 +1142,11 @@ def get_search_history(user_id: str):
             FROM search_query
             WHERE user_id = %s
             ORDER BY submitted_at DESC;
-        """, (user_id,))
-
+            """,
+            (user_id,),
+        )
         rows = cur.fetchall()
-
-        return {
-            "user_id": user_id,
-            "history": [serialize_row(row) for row in rows]
-        }
+        return {"user_id": user_id, "history": [serialize_row(row) for row in rows]}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -952,3 +1154,49 @@ def get_search_history(user_id: str):
     finally:
         cur.close()
         conn.close()
+
+
+@app.get("/api/search/query/{query_id}")
+def get_search_query(query_id: str):
+    """
+    Retrieve one search_query record by query_id.
+
+    This is useful for debugging and for the report team to confirm that a
+    query_id exists before generating a report.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            """
+            SELECT
+                query_id,
+                user_id,
+                input_type,
+                input_value,
+                resolution_status,
+                resolved_company_id,
+                resolved_brand_id,
+                resolved_product_id,
+                submitted_at
+            FROM search_query
+            WHERE query_id = %s;
+            """,
+            (query_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Query not found")
+        return {"query": serialize_row(row)}
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        cur.close()
+        conn.close()
+  
