@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import { Barcode, Search, Building2, ArrowRight, ShieldCheck, Sparkles, Leaf, CheckCircle2, CircleDot, MapPin, TrendingUp, Flame, FileText } from 'lucide-react';
+import { Barcode, Search, Building2, ArrowRight, ShieldCheck, Sparkles, Leaf, CheckCircle2, CircleDot, MapPin, TrendingUp, Flame, FileText, Loader2 } from 'lucide-react';
 import { Card, Chip, RiskBadge, Confidence } from '../components/shared';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
+import { search as apiSearch, uploadDocument } from '../../lib/api';
+import type { SearchRequest } from '../../lib/api';
 
 const HERO_IMG = 'https://images.unsplash.com/photo-1758702160898-6f96d1db5b73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600';
 
@@ -13,13 +15,25 @@ const suggestions = [
   { label: 'Bega Cheese', abn: '81 008 358 503', sector: 'Food & Beverage', score: 54 },
 ];
 
-const betterChoices = [
-  { brand: 'Five:am Organics', score: 82, level: 'Low' as const, note: 'Certified regenerative dairy, low land-use footprint.' },
-  { brand: 'Barambah Organics', score: 78, level: 'Low' as const, note: 'Supplier traceability to farm-gate; minimal protected area overlap.' },
-  { brand: 'Pure Harvest', score: 71, level: 'Medium' as const, note: 'Plant-based alternative with 38% lower biodiversity pressure.' },
-];
+type BetterChoice = {
+  brand: string;
+  score: number;
+  level: 'Low' | 'Medium' | 'High' | 'Critical';
+  note: string;
+};
 
-// Topographic contour SVG (matches Landing aesthetic)
+type RiskFactor = {
+  color: 'amber' | 'emerald' | 'orange' | 'rose';
+  text: string;
+};
+
+function getRiskLevel(score: number): 'Low' | 'Medium' | 'High' | 'Critical' {
+  if (score < 35) return 'Low';
+  if (score < 55) return 'Medium';
+  if (score < 75) return 'High';
+  return 'Critical';
+}
+
 const TopoSvg = ({ className = '' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 800 400" preserveAspectRatio="none" fill="none">
     {[0, 1, 2, 3, 4, 5, 6].map(i => (
@@ -32,26 +46,157 @@ export function ConsumerSearch() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'barcode' | 'brand' | 'company'>('barcode');
   const [value, setValue] = useState('');
-  const [resolved, setResolved] = useState<null | { brand: string; product: string; parent: string; abn: string; score: number }>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [resolved, setResolved] = useState<null | {
+    brand: string;
+    product: string;
+    parent: string;
+    abn: string;
+    biodiversityScore: number;
+    confidence: number;
+    source?: string;
+    imageUrl?: string;
+    riskFactors: RiskFactor[];
+    betterChoices: BetterChoice[];
+  }>(null);
+
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  const resolve = () => {
-    setResolved({
-      brand: 'Dairy Farmers',
-      product: 'Dairy Farmers Full Cream Milk 2L',
-      parent: 'Bega Cheese Limited',
-      abn: '81 008 358 503',
-      score: 54,
-    });
-    
-    setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+  const buildRequestBody = (
+    searchMode: 'barcode' | 'brand' | 'company',
+    searchValue: string
+  ): SearchRequest => {
+    if (searchMode === 'barcode') return { barcode: searchValue, brand: '', company_or_abn: '' };
+    if (searchMode === 'brand')   return { barcode: '', brand: searchValue, company_or_abn: '' };
+    return { barcode: '', brand: '', company_or_abn: searchValue };
   };
+
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+    setUploadedFile(file);
+    try {
+      await uploadDocument(file);
+    } catch (err) {
+      console.error('File upload error:', err);
+      setError('Failed to upload the PDF. Please try again.');
+    }
+  };
+
+  const resolveWithValue = async (
+    searchMode: 'barcode' | 'brand' | 'company',
+    rawValue: string
+  ) => {
+    const searchValue = rawValue.trim();
+    setError(null);
+
+    if (!searchValue) {
+      setError('Please enter a barcode, brand, company name, or ABN.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const requestBody = buildRequestBody(searchMode, searchValue);
+      // Uses centralised api.ts — Vite proxy routes /api/* to the FastAPI backend
+      const data = await apiSearch(requestBody);
+
+      if (!data.query_id) {
+        setError('Search completed, but no query_id was returned.');
+        return;
+      }
+
+      localStorage.setItem('query_id', data.query_id);
+
+      const result = data.result;
+      if (!result) {
+        setError('No matching result found.');
+        return;
+      }
+
+      const biodiversityScore =
+        result.risk_score ?? result.biodiversity_score ?? result.score ?? 50;
+
+      const confidence =
+        result.confidence ?? 50;
+
+      const riskFactors: RiskFactor[] = (result.risk_factors ?? []).map(
+        (f: { color?: string; text?: string; description?: string }) => ({
+          color: (f.color as RiskFactor['color']) ?? 'amber',
+          text: f.text ?? f.description ?? '',
+        })
+      );
+
+      const betterChoices: BetterChoice[] = (
+        result.alternatives ?? result.better_choices ?? []
+      ).map(
+        (b: {
+          brand?: string; brand_name?: string;
+          score?: number; biodiversity_score?: number;
+          risk_level?: string; level?: string;
+          note?: string; description?: string;
+        }) => ({
+          brand: b.brand ?? b.brand_name ?? 'Unknown',
+          score: b.score ?? b.biodiversity_score ?? 0,
+          level: (b.risk_level ?? b.level ?? 'Medium') as BetterChoice['level'],
+          note: b.note ?? b.description ?? '',
+        })
+      );
+
+      const resolvedData = {
+        brand:
+          result.brand?.brand_name ||
+          result.product?.brand ||
+          result.input_value ||
+          'Unknown brand',
+        product:
+          result.product?.product_name ||
+          result.company?.legal_name ||
+          result.brand?.brand_name ||
+          result.input_value ||
+          'Unknown product',
+        parent:
+          result.company?.legal_name ||
+          result.legal_owner ||
+          result.manufacturer ||
+          result.abn_verification?.legal_name ||
+          'Unknown company',
+        abn:
+          result.company?.abn ||
+          result.abn_verification?.abn ||
+          'N/A',
+        biodiversityScore,
+        confidence,
+        source: result.source,
+        imageUrl: result.product?.image_url,
+        riskFactors,
+        betterChoices,
+      };
+
+      setResolved(resolvedData);
+      localStorage.setItem('resolved_data', JSON.stringify(resolvedData));
+
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    } catch (err) {
+      console.error(err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Error connecting to backend. Please check the server is running.'
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resolve = () => resolveWithValue(mode, value);
 
   return (
     <div className="-m-0 bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] min-h-[calc(100vh-65px)]">
-      {/* HERO SEARCH */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0">
           <ImageWithFallback src={HERO_IMG} alt="forest canopy" className="w-full h-full object-cover" />
@@ -71,22 +216,23 @@ export function ConsumerSearch() {
         <div className="relative z-10 max-w-4xl mx-auto px-8 pt-16 pb-20">
           <div className="flex items-center gap-3 mb-5 text-emerald-200/80 font-mono text-[11px] tracking-[0.2em]">
             <span className="w-8 h-px bg-emerald-300/60" />
-            <span>§ 01 · RESOLVE & SCORE</span>
+            <span>§ 01 · RESOLVE &amp; SCORE</span>
           </div>
+
           <h1 className="text-[40px] md:text-[52px] leading-[1.05] tracking-tight text-white max-w-2xl">
             What's the real impact
             <span className="block italic text-emerald-200 font-light">of what you buy?</span>
           </h1>
+
           <p className="mt-5 text-stone-200/85 text-[15px] max-w-xl leading-relaxed">
             Scan a barcode, search a brand, or look up a company. We'll resolve the legal entity and score its biodiversity impact in under thirty seconds.
           </p>
 
-          {/* Search capsule */}
           <div className="mt-9 bg-white rounded-2xl shadow-2xl p-1.5 border border-white/10">
             <div className="flex gap-1 p-1 bg-stone-50 rounded-xl">
               {([
                 { id: 'barcode', label: 'Barcode', icon: Barcode },
-                { id: 'brand', label: 'Brand', icon: Sparkles },
+                { id: 'brand',   label: 'Brand',   icon: Sparkles },
                 { id: 'company', label: 'Company / ABN', icon: Building2 },
               ] as const).map(t => {
                 const Icon = t.icon;
@@ -94,7 +240,7 @@ export function ConsumerSearch() {
                 return (
                   <button
                     key={t.id}
-                    onClick={() => setMode(t.id)}
+                    onClick={() => { setMode(t.id); setValue(''); setError(null); }}
                     className={`flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] tracking-tight transition ${
                       active ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-900'
                     }`}
@@ -104,34 +250,65 @@ export function ConsumerSearch() {
                 );
               })}
             </div>
-            
+
             <div className="flex items-center gap-2 p-2">
               <Search size={16} className="text-stone-400 ml-2" />
               <input
                 value={value}
                 onChange={e => setValue(e.target.value)}
-                placeholder={mode === 'barcode' ? '9 310072 011691' : mode === 'brand' ? 'e.g. Dairy Farmers, Tim Tam…' : 'Company name or ABN'}
+                onKeyDown={e => e.key === 'Enter' && !isLoading && resolve()}
+                placeholder={
+                  mode === 'barcode' ? '9 310072 011691'
+                  : mode === 'brand' ? 'e.g. Dairy Farmers, Tim Tam…'
+                  : 'Company name or ABN'
+                }
                 className="flex-1 h-11 bg-transparent outline-none text-[14px] text-stone-800 placeholder:text-stone-400"
               />
-              <button onClick={resolve} className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]">
-                Analyse <ArrowRight size={14} />
+              <button
+                onClick={resolve}
+                disabled={isLoading}
+                className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)] transition"
+              >
+                {isLoading ? (
+                  <><Loader2 size={14} className="animate-spin" /> Analysing…</>
+                ) : (
+                  <>Analyse <ArrowRight size={14} /></>
+                )}
               </button>
             </div>
 
-            {/* Document Upload Area */}
+            {error && (
+              <div className="mx-2 mb-1 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-[12px] text-rose-700">
+                {error}
+              </div>
+            )}
+
             <div className="mx-2 mb-2 p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 group hover:bg-stone-100 hover:border-stone-300 transition-colors cursor-pointer text-center relative">
-              <input type="file" accept=".pdf" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+              <input
+                type="file"
+                accept=".pdf"
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileUpload(file);
+                }}
+              />
               <div className="flex flex-col items-center justify-center gap-1.5 pointer-events-none">
                 <div className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
                   <FileText size={14} />
                 </div>
-                <div className="text-[12px] font-medium text-stone-700">Upload product manual or CSR report</div>
+                <div className="text-[12px] font-medium text-stone-700">
+                  {uploadedFile ? (
+                    <span className="text-emerald-700">✓ {uploadedFile.name}</span>
+                  ) : (
+                    'Upload product manual or CSR report'
+                  )}
+                </div>
                 <div className="text-[10px] text-stone-400">PDFs only (max 10MB)</div>
               </div>
             </div>
           </div>
 
-          {/* Source line */}
           <div className="mt-6 pt-5 border-t border-white/15 flex flex-wrap items-center gap-x-8 gap-y-2 text-white/80">
             <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">INDEXED SOURCES</div>
             {['EPBC Act', 'ABR', 'CSIRO', 'TNFD', 'IUCN'].map(s => (
@@ -141,11 +318,9 @@ export function ConsumerSearch() {
         </div>
       </section>
 
-      {/* CONTENT */}
       <section className="max-w-5xl mx-auto px-8 py-14">
         {!resolved && (
           <div className="space-y-10">
-            {/* Trending */}
             <div>
               <div className="flex items-end justify-between mb-5">
                 <div>
@@ -167,7 +342,11 @@ export function ConsumerSearch() {
                   return (
                     <button
                       key={s.label}
-                      onClick={resolve}
+                      onClick={() => {
+                        setMode('company');
+                        setValue(s.abn);
+                        resolveWithValue('company', s.abn);
+                      }}
                       className="group relative p-5 bg-white border border-stone-200 hover:border-emerald-400 hover:shadow-md rounded-2xl text-left transition"
                     >
                       <div className="font-mono text-[9px] tracking-[0.2em] text-stone-400 mb-3">0{i + 1} / 04</div>
@@ -184,12 +363,11 @@ export function ConsumerSearch() {
               </div>
             </div>
 
-            {/* Info split */}
             <div className="relative grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { icon: ShieldCheck, title: 'Verified to ABR', text: 'Every brand is resolved to a real Australian Business Registry entity.' },
-                { icon: MapPin, title: 'Spatially grounded', text: 'Sites are checked against RAMSAR, EPBC and state-protected areas.' },
-                { icon: Leaf, title: 'Plain English', text: 'We explain the score in three lines — no jargon, no greenwashing.' },
+                { icon: ShieldCheck, title: 'Verified to ABR',   text: 'Every brand is resolved to a real Australian Business Registry entity.' },
+                { icon: MapPin,      title: 'Spatially grounded', text: 'Sites are checked against RAMSAR, EPBC and state-protected areas.' },
+                { icon: Leaf,        title: 'Plain English',      text: 'We explain the score in three lines — no jargon, no greenwashing.' },
               ].map((f, i) => {
                 const Icon = f.icon;
                 return (
@@ -225,10 +403,22 @@ export function ConsumerSearch() {
                     <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
                   </div>
                   <div className="text-[18px] text-stone-900 mt-0.5 tracking-tight">{resolved.product}</div>
-                  <div className="text-[13px] text-stone-600">Brand <span className="text-stone-900">{resolved.brand}</span> · Owned by <span className="text-stone-900">{resolved.parent}</span> · ABN {resolved.abn}</div>
-                  <div className="mt-2"><Confidence value={94} /></div>
+                  {resolved.imageUrl && (
+                    <img src={resolved.imageUrl} alt={resolved.product} className="mt-3 w-24 h-24 object-cover rounded-xl border border-stone-200" />
+                  )}
+                  <div className="text-[13px] text-stone-600">
+                    Brand <span className="text-stone-900">{resolved.brand}</span> · Owned by <span className="text-stone-900">{resolved.parent}</span> · ABN {resolved.abn}
+                  </div>
+                  <div className="mt-2"><Confidence value={resolved.confidence} /></div>
                 </div>
-                <button onClick={() => navigate('/app/overview')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm">
+                <button
+                  onClick={() =>
+                    navigate('/app/overview', {
+                      state: { query_id: localStorage.getItem('query_id'), resolved },
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm"
+                >
                   View full report <ArrowRight size={14} />
                 </button>
               </div>
@@ -238,12 +428,12 @@ export function ConsumerSearch() {
               <Card className="p-6 md:col-span-1">
                 <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2">Biodiversity score</div>
                 <div className="flex items-end gap-2">
-                  <div className="text-[64px] leading-none tracking-tight text-amber-600">{resolved.score}</div>
+                  <div className="text-[64px] leading-none tracking-tight text-amber-600">{resolved.biodiversityScore}</div>
                   <div className="text-stone-500 mb-2">/100</div>
                 </div>
-                <div className="mt-2"><RiskBadge level="Medium" /></div>
+                <div className="mt-2"><RiskBadge level={getRiskLevel(resolved.biodiversityScore)} /></div>
                 <div className="mt-4 h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500" style={{ width: `${resolved.score}%` }} />
+                  <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500" style={{ width: `${resolved.biodiversityScore}%` }} />
                 </div>
                 <div className="mt-2 flex justify-between text-[10px] text-stone-400 font-mono">
                   <span>0 · LOW</span><span>50</span><span>100 · CRITICAL</span>
@@ -255,41 +445,57 @@ export function ConsumerSearch() {
                   <ShieldCheck size={16} className="text-emerald-600" />
                   <div className="text-[13px] uppercase tracking-wider text-stone-500">Why this score</div>
                 </div>
-                <ul className="space-y-2.5">
-                  <li className="flex gap-3 text-[13px] text-stone-700"><CircleDot size={14} className="text-amber-500 mt-0.5 shrink-0" />2 processing sites within 5km of RAMSAR wetlands in Victoria.</li>
-                  <li className="flex gap-3 text-[13px] text-stone-700"><CircleDot size={14} className="text-emerald-500 mt-0.5 shrink-0" />Supplier chain disclosed to 3rd tier; 72% of milk from certified farms.</li>
-                  <li className="flex gap-3 text-[13px] text-stone-700"><CircleDot size={14} className="text-orange-500 mt-0.5 shrink-0" />1 open EPBC referral (grazing expansion, NSW) in last 12 months.</li>
-                </ul>
+                {resolved.riskFactors.length > 0 ? (
+                  <ul className="space-y-2.5">
+                    {resolved.riskFactors.map((f, idx) => {
+                      const dotColor =
+                        f.color === 'emerald' ? 'text-emerald-500'
+                        : f.color === 'orange' ? 'text-orange-500'
+                        : f.color === 'rose'   ? 'text-rose-500'
+                        : 'text-amber-500';
+                      return (
+                        <li key={idx} className="flex gap-3 text-[13px] text-stone-700">
+                          <CircleDot size={14} className={`${dotColor} mt-0.5 shrink-0`} />
+                          {f.text}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-[13px] text-stone-500 italic">No risk factor details returned by the analysis engine.</p>
+                )}
               </Card>
             </div>
 
-            <div>
-              <div className="flex items-end justify-between mb-4">
-                <div>
-                  <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-emerald-700 font-mono mb-1">
-                    <Sparkles size={12} /> § 03 · BETTER CHOICES
+            {resolved.betterChoices.length > 0 && (
+              <div>
+                <div className="flex items-end justify-between mb-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-emerald-700 font-mono mb-1">
+                      <Sparkles size={12} /> § 03 · BETTER CHOICES
+                    </div>
+                    <h2 className="text-[22px] tracking-tight text-stone-900">Kinder to nature, in the same category</h2>
                   </div>
-                  <h2 className="text-[22px] tracking-tight text-stone-900">Kinder to nature, in the same category</h2>
+                  <TrendingUp size={16} className="text-emerald-600" />
                 </div>
-                <TrendingUp size={16} className="text-emerald-600" />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {resolved.betterChoices.map((b, i) => (
+                    <Card key={b.brand} className="p-5 hover:shadow-md transition">
+                      <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-2">ALT · 0{i + 1}</div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-[14px] tracking-tight text-stone-900">{b.brand}</div>
+                        <RiskBadge level={b.level} />
+                      </div>
+                      <div className="flex items-end gap-1 mb-2">
+                        <div className="text-[32px] leading-none tracking-tight text-emerald-700">{b.score}</div>
+                        <div className="text-[11px] text-stone-400 mb-1">score</div>
+                      </div>
+                      <div className="text-[12px] text-stone-600 leading-relaxed">{b.note}</div>
+                    </Card>
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {betterChoices.map((b, i) => (
-                  <Card key={b.brand} className="p-5 hover:shadow-md transition">
-                    <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-2">ALT · 0{i + 1}</div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-[14px] tracking-tight text-stone-900">{b.brand}</div>
-                      <RiskBadge level={b.level} />
-                    </div>
-                    <div className="flex items-end gap-1 mb-2">
-                      <div className="text-[32px] leading-none tracking-tight text-emerald-700">{b.score}</div>
-                      <div className="text-[11px] text-stone-400 mb-1">score</div>
-                    </div>
-                    <div className="text-[12px] text-stone-600 leading-relaxed">{b.note}</div>
-                  </Card>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
         )}
       </section>
