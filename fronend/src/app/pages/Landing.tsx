@@ -1,3 +1,4 @@
+import React, { useState } from 'react';
 import { Leaf, ArrowRight, Search, BarChart3, Shield, TrendingDown, Newspaper, ExternalLink, Users, Briefcase, CheckCircle2, Globe2, Sparkles, MapPin } from 'lucide-react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
@@ -51,11 +52,17 @@ const news = [
   },
 ];
 
-const journey = [
+const investorJourney = [
   { icon: Search, title: 'Search', subtitle: '01 · Input', text: 'Scan a barcode, brand, or ABN. We resolve it to a legal entity in seconds.' },
   { icon: BarChart3, title: 'Analyse', subtitle: '02 · Score', text: 'Spatial overlays, TNFD categories, and a 0–100 biodiversity risk score.' },
   { icon: Shield, title: 'Evidence', subtitle: '03 · Prove', text: 'Every claim is traced to regulatory, scientific, and independent sources.' },
   { icon: Sparkles, title: 'Act', subtitle: '04 · Decide', text: 'Find better alternatives, export a TNFD report, or set real-time alerts.' },
+];
+
+const consumerJourney = [
+  { icon: Search, title: 'Search', subtitle: '01 · Scan', text: 'Scan a product barcode or search for your favorite brand.' },
+  { icon: BarChart3, title: 'Analyse', subtitle: '02 · Discover', text: 'Instantly see the true environmental footprint and hidden impact.' },
+  { icon: Sparkles, title: 'Act', subtitle: '03 · Choose', text: 'Find sustainable alternatives and shop with confidence.' },
 ];
 
 // Industrial topographic background
@@ -77,6 +84,7 @@ const Ticks = () => (
 
 export function Landing() {
   const navigate = useNavigate();
+  const [activeJourney, setActiveJourney] = useState<'investor' | 'consumer'>('investor');
 
   const handleEnter = () => {
     navigate('/app/search');
@@ -132,8 +140,38 @@ export function Landing() {
         </button>
       </div>
 
+      {/* STATS — the state of biodiversity */}
+      <section id="why-biodiversity" className="relative max-w-7xl mx-auto px-6 pt-10 pb-16">
+        <TopoSvg className="absolute inset-0 w-full h-full text-emerald-800 pointer-events-none opacity-50" />
+        <div className="relative">
+          <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-rose-500 mb-2 font-mono">
+                <TrendingDown size={14} />
+                <span>§ 01 · The state of biodiversity</span>
+              </div>
+              <h2 className="text-[34px] leading-tight tracking-tight text-stone-900 max-w-xl">Every claim has a consequence. We measure the fallout.</h2>
+            </div>
+            <div className="hidden md:block">
+              <Ticks />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-px bg-stone-200 rounded-2xl overflow-hidden border border-stone-200 shadow-sm">
+            {stats.map((s, i) => (
+              <div key={s.label} className="bg-white/60 backdrop-blur-sm border-t md:border-t-0 md:border-l border-stone-200/50 p-7 relative hover:bg-white transition-colors">
+                <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-3">0{i + 1} / 04</div>
+                <div className="text-[52px] leading-none text-emerald-800 tracking-tight">{s.value}</div>
+                <div className="mt-3 text-[13px] text-stone-700 leading-snug font-medium">{s.label}</div>
+                <div className="mt-4 pt-3 border-t border-dashed border-stone-200 text-[10px] text-stone-500 font-mono tracking-wider uppercase">Source · {s.source}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* HERO */}
-      <section className="relative overflow-hidden">
+      <section className="relative overflow-hidden mt-4 mx-4 md:mx-6 rounded-3xl">
         <div className="absolute inset-0">
           <ImageWithFallback src={HERO_IMG} alt="Australian forest canopy" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-b from-stone-950/70 via-stone-900/60 to-[#f5f3ee]" />
@@ -150,61 +188,61 @@ export function Landing() {
         </div>
 
         <div className="relative z-10 max-w-7xl mx-auto px-6 pt-20 pb-28 md:pt-28 md:pb-36">
-          <div className="flex items-center gap-3 mb-6 text-emerald-200/80 font-mono text-[11px] tracking-[0.2em]">
-            <span className="w-8 h-px bg-emerald-300/60" />
-            <span>LAT —25.27° · LON 133.77° · AU</span>
+          <div className="flex items-center gap-3 mb-6 text-rose-400 font-mono text-[11px] tracking-[0.2em] uppercase">
+            <span className="w-8 h-px bg-rose-500/60" />
+            <span>We're losing nature faster than we can measure it.</span>
           </div>
-          <h1 className="text-[44px] md:text-[68px] leading-[1.02] tracking-tight text-white max-w-4xl">
-            The biodiversity impact
-            <span className="block italic text-emerald-200 font-light">behind every company.</span>
+          <h1 className="text-[44px] md:text-[60px] leading-[1.05] tracking-tight text-white max-w-4xl">
+            Knowing your everyday store impact
+            <span className="block italic text-emerald-300 font-light">on nature and the environment.</span>
           </h1>
           <p className="mt-6 text-stone-200/90 text-[16px] max-w-xl leading-relaxed">
-            EcoTrace fuses regulatory filings, scientific data, and supply-chain records into a trusted biodiversity risk score — for the products you buy and the companies you back.
+            EcoTrace fuses regulatory filings, scientific data, and supply-chain records into a trusted biodiversity risk score. Stop guessing—start tracing the footprint of what you buy and who you back.
           </p>
 
-          <div className="mt-10 flex flex-col sm:flex-row gap-3">
-            <button onClick={() => navigate('/app/watchlist')} className="inline-flex items-center justify-center gap-2 px-6 h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[15px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
-              <Briefcase size={16} /> I am an investor <ArrowRight size={15} />
-            </button>
-            <button onClick={() => navigate('/app/search')} className="inline-flex items-center justify-center gap-2 px-6 h-12 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[15px] backdrop-blur-sm border border-white/20 transition-colors">
-              <Users size={16} /> I am a consumer <ArrowRight size={15} />
-            </button>
-          </div>
-          <div className="mt-4 text-[11px] text-stone-300/70 font-mono tracking-wider">// TAILORED TO YOU</div>
+          <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-3xl">
+            <div className="bg-stone-900/40 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-stone-900/60 transition">
+              <div>
+                <div className="flex items-center gap-2 text-emerald-400 mb-3">
+                  <Briefcase size={18} />
+                  <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Investors</span>
+                </div>
+                <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
+                  Do you understand the true environmental impact of your portfolio?
+                </h3>
+                <p className="text-stone-300 text-[14px] leading-relaxed">
+                  Identify hidden biodiversity risks and protect nature before you invest in companies that degrade it.
+                </p>
+              </div>
+              <button onClick={() => navigate('/app/watchlist')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[14px] font-medium shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
+                Explore Investor Tools <ArrowRight size={15} />
+              </button>
+            </div>
 
+            <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-white/10 transition">
+              <div>
+                <div className="flex items-center gap-2 text-blue-300 mb-3">
+                  <Users size={18} />
+                  <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Consumers</span>
+                </div>
+                <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
+                  Do you know what your favorite products are really made from?
+                </h3>
+                <p className="text-stone-300 text-[14px] leading-relaxed">
+                  Scan the everyday items you buy to uncover their hidden footprint on ecosystems.
+                </p>
+              </div>
+              <button onClick={() => navigate('/app/search')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[14px] font-medium border border-white/20 transition-colors">
+                Trace Consumer Impact <ArrowRight size={15} />
+              </button>
+            </div>
+          </div>
+          
           {/* Industrial measurement strip */}
           <div className="mt-14 pt-6 border-t border-white/15 flex flex-wrap items-center gap-x-10 gap-y-3 text-white/80">
             <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">INDEXED SOURCES</div>
             {['EPBC Act', 'CSIRO', 'IPBES', 'TNFD', 'IUCN', 'ABR', 'WA EPA'].map(s => (
               <span key={s} className="text-[12px] tracking-tight">{s}</span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* STATS — the state of biodiversity */}
-      <section id="why-biodiversity" className="relative max-w-7xl mx-auto px-6 py-20">
-        <TopoSvg className="absolute inset-0 w-full h-full text-emerald-800 pointer-events-none" />
-        <div className="relative">
-          <div className="flex items-end justify-between mb-8">
-            <div>
-              <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-rose-500 mb-2 font-mono">
-                <TrendingDown size={14} />
-                <span>§ 01 · The state of biodiversity</span>
-              </div>
-              <h2 className="text-[34px] leading-tight tracking-tight text-stone-900 max-w-xl">We're losing nature faster than we can measure it.</h2>
-            </div>
-            <Ticks />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-px bg-stone-200 rounded-2xl overflow-hidden border border-stone-200">
-            {stats.map((s, i) => (
-              <div key={s.label} className="bg-transparent border-t md:border-t-0 md:border-l border-stone-200/50 p-7 relative">
-                <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-3">0{i + 1} / 04</div>
-                <div className="text-[52px] leading-none text-emerald-800 tracking-tight">{s.value}</div>
-                <div className="mt-3 text-[13px] text-stone-700 leading-snug">{s.label}</div>
-                <div className="mt-4 pt-3 border-t border-dashed border-stone-300 text-[10px] text-stone-500 font-mono tracking-wider uppercase">Source · {s.source}</div>
-              </div>
             ))}
           </div>
         </div>
@@ -264,58 +302,118 @@ export function Landing() {
             <h2 className="text-[40px] md:text-[48px] tracking-tight leading-[1.05] text-white">
               A simple, <span className="italic text-emerald-300 font-light">transparent</span> journey.
             </h2>
-            <p className="mt-4 text-stone-300/80 text-[15px] max-w-xl mx-auto">From question to evidence in four calibrated steps — whether you're buying groceries or managing AU$4B in assets.</p>
-          </div>
+            <p className="mt-4 text-stone-300/80 text-[15px] max-w-xl mx-auto mb-10">From question to evidence — tailored whether you're managing AU$4B in assets or buying everyday groceries.</p>
 
-          {/* Connected path */}
-          <div className="relative">
-            {/* Dashed path on desktop */}
-            <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
-              <line x1="60" y1="10" x2="940" y2="10" stroke="#10b981" strokeWidth="1" strokeDasharray="6 8" opacity="0.55" />
-              {[125, 375, 625, 875].map((cx, i) => (
-                <g key={i}>
-                  <circle cx={cx} cy="10" r="6" fill="#10b981" opacity="0.2" />
-                  <circle cx={cx} cy="10" r="2.5" fill="#10b981" />
-                </g>
-              ))}
-            </svg>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 md:gap-5 relative">
-              {journey.map((j, i) => {
-                const Icon = j.icon;
-                return (
-                  <div key={j.title} className="relative">
-                    {/* Big numeral */}
-                    <div className="flex items-center gap-3 mb-5">
-                      <div className="w-12 h-12 rounded-full border border-emerald-400/40 bg-stone-950 flex items-center justify-center text-emerald-300 relative z-10">
-                        <span className="text-[15px] tracking-tight">0{i + 1}</span>
-                      </div>
-                      <div className="flex-1 h-px bg-gradient-to-r from-emerald-400/40 to-transparent" />
-                    </div>
-
-                    <div className="p-6 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur-sm hover:bg-white/[0.06] transition">
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-400/15 text-emerald-300 flex items-center justify-center">
-                          <Icon size={16} />
-                        </div>
-                        <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400">{j.subtitle}</div>
-                      </div>
-                      <div className="text-[19px] tracking-tight text-white mb-1.5">{j.title}</div>
-                      <div className="text-[13px] text-stone-400 leading-relaxed">{j.text}</div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex justify-center">
+              <div className="inline-flex items-center p-1 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-sm shadow-inner">
+                <button 
+                  onClick={() => setActiveJourney('investor')}
+                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
+                    activeJourney === 'investor' 
+                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 shadow-sm' 
+                      : 'text-stone-400 hover:text-stone-200 hover:bg-white/[0.05] border border-transparent'
+                  }`}
+                >
+                  <Briefcase size={16} />
+                  If you want to invest to company
+                </button>
+                <button 
+                  onClick={() => setActiveJourney('consumer')}
+                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
+                    activeJourney === 'consumer' 
+                      ? 'bg-blue-500/15 text-blue-300 border border-blue-500/20 shadow-sm' 
+                      : 'text-stone-400 hover:text-stone-200 hover:bg-white/[0.05] border border-transparent'
+                  }`}
+                >
+                  <Users size={16} />
+                  If you want to see your product impact
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="mt-14 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button onClick={() => navigate('/app/watchlist')} className="inline-flex items-center justify-center gap-2 px-6 h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[15px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
-              <Briefcase size={16} /> I am an investor
-            </button>
-            <button onClick={() => navigate('/app/search')} className="inline-flex items-center justify-center gap-2 px-6 h-12 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[15px] backdrop-blur-sm border border-white/20 transition-colors">
-              <Users size={16} /> I am a consumer
-            </button>
+          <div className="relative min-h-[320px]">
+            {/* Investor Journey */}
+            {activeJourney === 'investor' && (
+              <div className="relative transition-opacity duration-500 opacity-100">
+                <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
+                  <line x1="60" y1="10" x2="940" y2="10" stroke="#10b981" strokeWidth="1" strokeDasharray="6 8" opacity="0.55" />
+                  {[125, 375, 625, 875].map((cx, i) => (
+                    <g key={i}>
+                      <circle cx={cx} cy="10" r="6" fill="#10b981" opacity="0.2" />
+                      <circle cx={cx} cy="10" r="2.5" fill="#10b981" />
+                    </g>
+                  ))}
+                </svg>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 md:gap-5 relative">
+                  {investorJourney.map((j, i) => {
+                    const Icon = j.icon;
+                    return (
+                      <div key={j.title} className="relative">
+                        <div className="flex items-center gap-3 mb-5">
+                          <div className="w-12 h-12 rounded-full border border-emerald-400/40 bg-stone-950 flex items-center justify-center text-emerald-300 relative z-10">
+                            <span className="text-[15px] tracking-tight">0{i + 1}</span>
+                          </div>
+                          <div className="flex-1 h-px bg-gradient-to-r from-emerald-400/40 to-transparent" />
+                        </div>
+                        <div className="p-6 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur-sm hover:bg-white/[0.06] transition h-full">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-9 h-9 rounded-lg bg-emerald-400/15 text-emerald-300 flex items-center justify-center">
+                              <Icon size={16} />
+                            </div>
+                            <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400">{j.subtitle}</div>
+                          </div>
+                          <div className="text-[19px] tracking-tight text-white mb-1.5">{j.title}</div>
+                          <div className="text-[13px] text-stone-400 leading-relaxed">{j.text}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Consumer Journey */}
+            {activeJourney === 'consumer' && (
+              <div className="relative transition-opacity duration-500 opacity-100">
+                <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
+                  <line x1="60" y1="10" x2="940" y2="10" stroke="#93c5fd" strokeWidth="1" strokeDasharray="6 8" opacity="0.4" />
+                  {[166, 500, 833].map((cx, i) => (
+                    <g key={i}>
+                      <circle cx={cx} cy="10" r="6" fill="#93c5fd" opacity="0.2" />
+                      <circle cx={cx} cy="10" r="2.5" fill="#93c5fd" />
+                    </g>
+                  ))}
+                </svg>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 relative">
+                  {consumerJourney.map((j, i) => {
+                    const Icon = j.icon;
+                    return (
+                      <div key={j.title} className="relative">
+                        <div className="flex items-center gap-3 mb-5">
+                          <div className="w-12 h-12 rounded-full border border-blue-400/40 bg-stone-950 flex items-center justify-center text-blue-300 relative z-10">
+                            <span className="text-[15px] tracking-tight">0{i + 1}</span>
+                          </div>
+                          <div className="flex-1 h-px bg-gradient-to-r from-blue-400/40 to-transparent" />
+                        </div>
+                        <div className="p-6 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur-sm hover:bg-white/[0.06] transition h-full">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-9 h-9 rounded-lg bg-blue-400/15 text-blue-300 flex items-center justify-center">
+                              <Icon size={16} />
+                            </div>
+                            <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400">{j.subtitle}</div>
+                          </div>
+                          <div className="text-[19px] tracking-tight text-white mb-1.5">{j.title}</div>
+                          <div className="text-[13px] text-stone-400 leading-relaxed">{j.text}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -350,56 +448,6 @@ export function Landing() {
               </div>
             </article>
           ))}
-        </div>
-      </section>
-
-      {/* CHOOSE ROUTE */}
-      <section className="max-w-7xl mx-auto px-6 pb-24">
-        <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-stone-500 mb-6 font-mono">
-          <Globe2 size={13} /> § 04 · Get started
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-5xl mx-auto">
-          {/* Consumer Card */}
-          <div className="relative p-8 bg-white border border-stone-200 rounded-2xl overflow-hidden flex flex-col">
-            <TopoSvg className="absolute inset-0 w-full h-full text-emerald-700 pointer-events-none opacity-20" />
-            <div className="relative flex-1 flex flex-col">
-              <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center mb-5 shrink-0">
-                <Users size={22} />
-              </div>
-              <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-1">FOR CONSUMERS</div>
-              <h3 className="text-[26px] tracking-tight text-stone-900 mb-3">Shop with conviction.</h3>
-              <p className="text-[14px] text-stone-600 leading-relaxed mb-6">Scan a barcode or search a brand. Get a clear biodiversity score and find better alternatives — in under thirty seconds.</p>
-              <ul className="space-y-3 text-[13px] text-stone-700 mb-8 flex-1">
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-emerald-600 mt-0.5 shrink-0" /> Barcode and brand search</li>
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-emerald-600 mt-0.5 shrink-0" /> Plain-English explanations</li>
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-emerald-600 mt-0.5 shrink-0" /> Better Choice recommendations</li>
-              </ul>
-              <button onClick={() => navigate('/app/search')} className="w-full inline-flex items-center justify-center gap-2 px-5 h-12 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[14px] font-medium transition-colors mt-auto shadow-sm">
-                Open consumer search <ArrowRight size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Investor Card */}
-          <div className="relative p-8 bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden flex flex-col text-white">
-            <TopoSvg className="absolute inset-0 w-full h-full text-stone-700 pointer-events-none opacity-20" />
-            <div className="relative flex-1 flex flex-col">
-              <div className="w-12 h-12 rounded-xl bg-stone-800 text-stone-300 flex items-center justify-center mb-5 shrink-0">
-                <Briefcase size={22} />
-              </div>
-              <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-1">FOR INVESTORS & ENTERPRISE</div>
-              <h3 className="text-[26px] tracking-tight text-white mb-3">Invest with insight.</h3>
-              <p className="text-[14px] text-stone-400 leading-relaxed mb-6">Screen portfolios for biodiversity risk. Access supply chain maps, overlap analysis, and early-warning alerts.</p>
-              <ul className="space-y-3 text-[13px] text-stone-300 mb-8 flex-1">
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-stone-500 mt-0.5 shrink-0" /> TNFD-aligned portfolio screening</li>
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-stone-500 mt-0.5 shrink-0" /> Supply chain risk mapping</li>
-                <li className="flex gap-2.5"><CheckCircle2 size={16} className="text-stone-500 mt-0.5 shrink-0" /> Automated incident alerts</li>
-              </ul>
-              <button onClick={() => navigate('/app/watchlist')} className="w-full inline-flex items-center justify-center gap-2 px-5 h-12 bg-white hover:bg-stone-100 text-stone-900 rounded-xl text-[14px] font-medium transition-colors mt-auto shadow-sm">
-                Open enterprise watchlist <ArrowRight size={16} />
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 
