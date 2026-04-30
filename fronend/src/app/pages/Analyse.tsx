@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { MapPin, Layers, Ruler, AlertTriangle, FileText, ExternalLink, X, Trees, Bird, Droplets, Siren, ShieldAlert, Waves, Leaf, Fish } from 'lucide-react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import { Card, Chip, RiskBadge, Confidence, SectionTitle } from '../components/shared';
+import { analysisEvidenceCards, analysisMapSites, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
 
 const sites = [
   { id: 's1', name: 'Olympic Dam', state: 'SA', level: 'High' as const, x: 52, y: 64, type: 'Mine', km: 2.1 },
@@ -17,7 +18,7 @@ const protectedAreas = [
   { id: 'p3', name: 'Fortescue Marsh', x: 29, y: 38, kind: 'Wetland' },
 ];
 
-const evidence = [
+const fallbackEvidence = [
   { id: 'e1', type: 'EPBC', title: 'EPBC 2025/09421 — Expansion referral', date: '14 Apr 2026', conf: 92, source: 'Dept of Climate Change' },
   { id: 'e2', type: 'Audit', title: 'Turbidity breach, Port Hedland shipping channel', date: '21 Mar 2026', conf: 86, source: 'WA EPA' },
   { id: 'e3', type: 'Science', title: 'Greater Bilby population decline — Pilbara survey', date: '02 Mar 2026', conf: 78, source: 'CSIRO' },
@@ -27,6 +28,12 @@ const evidence = [
 export function Analyse() {
   const [selected, setSelected] = useState<string | null>(null);
   const site = sites.find(s => s.id === selected);
+  const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const backendEvidence = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const backendSites = useMemo(() => analysisMapSites(analysis), [analysis]);
+  const displayEvidence = backendEvidence.length ? backendEvidence : fallbackEvidence;
+  const displaySites = backendSites.length ? backendSites : sites;
+  const companyName = companyDisplayName(analysis);
 
   return (
     <div className="relative h-[calc(100vh-65px)] overflow-hidden">
@@ -36,7 +43,7 @@ export function Analyse() {
         <div className="text-[10px] font-mono tracking-[0.25em] uppercase text-stone-500 mb-3">32°30′S · 137°45′E — OLYMPIC DAM · SA</div>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-400">Analyse · BHP Group</div>
+            <div className="text-[11px] uppercase tracking-wider text-stone-400">Analyse · {companyName}</div>
             <div className="text-[22px] text-stone-900">Spatial & <span className="italic text-emerald-700">evidence</span> analysis</div>
           </div>
           <div className="flex items-center gap-2">
@@ -48,9 +55,9 @@ export function Analyse() {
         <Card className="p-0 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-stone-100">
             <div className="flex gap-1.5">
-              <Chip tone="emerald">Operational sites (5)</Chip>
+              <Chip tone="emerald">{backendSites.length ? `Evidence locations (${backendSites.length})` : 'Operational sites (5)'}</Chip>
               <Chip tone="blue">Protected areas (3)</Chip>
-              <Chip tone="amber">5 km buffer</Chip>
+              <Chip tone="amber">{displayEvidence.length} evidence records</Chip>
             </div>
             <div className="text-[11px] text-stone-500">Projection: GDA2020 Albers</div>
           </div>
@@ -82,7 +89,7 @@ export function Analyse() {
                 <div className="absolute -translate-x-1/2 mt-1 text-[10px] text-emerald-800 bg-white/80 px-1.5 py-0.5 rounded whitespace-nowrap" style={{ top: '50%', left: '50%' }}>{p.name}</div>
               </div>
             ))}
-            {sites.map(s => {
+            {displaySites.map(s => {
               const active = selected === s.id;
               const color = s.level === 'Critical' ? 'bg-rose-500' : s.level === 'High' ? 'bg-orange-500' : s.level === 'Medium' ? 'bg-amber-500' : 'bg-emerald-500';
               return (
@@ -105,25 +112,25 @@ export function Analyse() {
         </Card>
 
         <div className="mt-5 grid grid-cols-3 gap-4">
-          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Trees size={14} /> Land-use overlap</div><div className="text-[22px] text-stone-900 mt-1">3.2 ha</div><div className="text-[11px] text-stone-500">within 5 km of protected areas</div></Card>
-          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Bird size={14} /> Species exposure</div><div className="text-[22px] text-stone-900 mt-1">17</div><div className="text-[11px] text-stone-500">IUCN-listed within buffer</div></Card>
-          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Droplets size={14} /> Water stress</div><div className="text-[22px] text-stone-900 mt-1">Very High</div><div className="text-[11px] text-stone-500">WRI Aqueduct 4.0</div></Card>
+          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Trees size={14} /> Evidence locations</div><div className="text-[22px] text-stone-900 mt-1">{backendSites.length || sites.length}</div><div className="text-[11px] text-stone-500">{backendSites.length ? 'from latest backend analysis' : 'demo operational markers'}</div></Card>
+          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Bird size={14} /> Report signals</div><div className="text-[22px] text-stone-900 mt-1">{analysis?.reports?.evidence_count ?? 0}</div><div className="text-[11px] text-stone-500">uploaded report evidence records</div></Card>
+          <Card className="p-4"><div className="flex items-center gap-2 text-stone-600 text-[12px]"><Droplets size={14} /> News signals</div><div className="text-[22px] text-stone-900 mt-1">{analysis?.news?.evidence?.length ?? 0}</div><div className="text-[11px] text-stone-500">news evidence records</div></Card>
         </div>
 
         <div className="mt-6">
           <SectionTitle title="Claim-linked evidence" action={<button className="text-[11px] text-emerald-700 hover:underline">Open provenance graph</button>} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {evidence.map(e => (
+            {displayEvidence.map(e => (
               <Card key={e.id} className="p-4">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <Chip tone={e.type === 'EPBC' ? 'rose' : e.type === 'Audit' ? 'amber' : e.type === 'Science' ? 'blue' : 'stone'}>{e.type}</Chip>
+                  <Chip tone={e.type === 'Report' ? 'blue' : e.type === 'News' ? 'stone' : e.type === 'EPBC' ? 'rose' : e.type === 'Audit' ? 'amber' : e.type === 'Science' ? 'blue' : 'stone'}>{e.type}</Chip>
                   <div className="text-[11px] text-stone-500">{e.date}</div>
                 </div>
                 <div className="text-[14px] text-stone-900">{e.title}</div>
-                <div className="text-[12px] text-stone-500">{e.source}</div>
+                <div className="text-[12px] text-stone-500">{e.source}{'location' in e && e.location ? ` · ${e.location}` : ''}</div>
                 <div className="mt-2 flex items-center justify-between">
                   <Confidence value={e.conf} />
-                  <a className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">Open source <ExternalLink size={10} /></a>
+                  {'url' in e && e.url ? (<a href={e.url} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">Open source <ExternalLink size={10} /></a>) : (<span className="text-[11px] text-stone-400">Source captured</span>)}
                 </div>
               </Card>
             ))}
@@ -210,7 +217,7 @@ export function Analyse() {
               <div className="px-5 py-5 mt-2">
                 <div className="text-[10px] font-mono tracking-[0.25em] uppercase text-emerald-800/70 mb-2.5">Linked evidence</div>
                 <div className="space-y-2">
-                  {evidence.slice(0, 2).map(e => (
+                  {displayEvidence.slice(0, 2).map(e => (
                     <div key={e.id} className="p-3 bg-stone-50 rounded-xl">
                       <div className="flex items-center gap-2 mb-1"><FileText size={12} className="text-stone-500" /><div className="text-[12px] text-stone-900">{e.title}</div></div>
                       <Confidence value={e.conf} />
@@ -230,3 +237,4 @@ export function Analyse() {
     </div>
   );
 }
+

@@ -54,25 +54,52 @@ POST /api/search
 
 import os
 import re
+import shutil
+import sys
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import asdict
+from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Import pipeline utility functions from sibling module
+from backend.run_ecotrace import (
+    article_candidate_score,
+    build_company_search_queries,
+    company_search_name,
+    dedupe_article_metadata,
+    relevant_llm_candidates,
+    resolve_report_paths,
+    test_guardian,
+    test_newsapi,
+    test_newsdata,
+    test_nyt,
+    test_openrouter_many,
+    test_serpapi,
+    test_uploaded_reports,
+    test_webz,
+    test_freenewsapi,
+)
 
 
 # ============================================================
 # Environment
 # ============================================================
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 
 # ============================================================
@@ -147,6 +174,172 @@ def serialize_row(row):
     for key, value in row.items():
         result[key] = str(value) if isinstance(value, UUID) else value
     return result
+
+
+REPORTS_DIR = REPO_ROOT / "reports"
+SUPPORTED_REPORT_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".json",
+    ".html",
+    ".htm",
+}
+
+KNOWN_COMPANY_ABNS = {
+    "bhp": "49004028077",
+    "bhp group": "49004028077",
+    "bhp group limited": "49004028077",
+    "coles": "11004089936",
+    "coles group": "11004089936",
+    "coles group limited": "11004089936",
+    "woolworths": "88000014675",
+    "woolworths group": "88000014675",
+    "woolworths group limited": "88000014675",
+    "bega": "81008358503",
+    "bega cheese": "81008358503",
+}
+
+
+def safe_report_filename(filename: str) -> str:
+    """
+    Keep uploaded report filenames local to reports/ and filesystem-safe.
+    """
+    name = Path(filename or "uploaded-report").name
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name).strip(" .")
+    return name or "uploaded-report"
+
+
+def save_uploaded_reports(files: Optional[List[UploadFile]]) -> List[str]:
+    """
+    Save report uploads into reports/ temporarily and return their paths for analysis.
+    """
+    if not files:
+        return []
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    saved_paths: List[str] = []
+
+    for upload in files:
+        filename = safe_report_filename(upload.filename or "")
+        extension = Path(filename).suffix.lower()
+        if extension not in SUPPORTED_REPORT_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported report file type: {extension or 'none'}",
+            )
+
+        target = REPORTS_DIR / filename
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            target = REPORTS_DIR / f"{stem}-{int(time.time())}{suffix}"
+
+        with target.open("wb") as output:
+            shutil.copyfileobj(upload.file, output)
+        saved_paths.append(str(target))
+
+    return saved_paths
+
+
+def delete_temporary_reports(paths: List[str]) -> None:
+    """
+    Remove uploaded report copies after analysis. Existing reports/ fixtures are not passed here.
+    """
+    for path in paths:
+        try:
+            target = Path(path).resolve()
+            if target.parent == REPORTS_DIR.resolve() and target.exists():
+                target.unlink()
+        except OSError:
+            pass
+
+
+def evidence_record_to_dict(record) -> Dict[str, Any]:
+    if hasattr(record, "__dataclass_fields__"):
+        return asdict(record)
+    return dict(record)
+
+
+def resolve_company_for_analysis(company_or_abn: str) -> Dict[str, Any]:
+    """
+    Resolve a company name or ABN through ABR, then prepare search terms.
+    """
+    value = company_or_abn.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="company_or_abn is required")
+
+    alias_abn = KNOWN_COMPANY_ABNS.get(value.lower())
+
+    if is_abn(value) or alias_abn:
+        abn = alias_abn or clean_abn(value)
+        abn_result = verify_abn_with_abr(abn)
+        input_type = "abn"
+    else:
+        abn_result = search_company_name_with_abr(value)
+        input_type = "company_name"
+
+    legal_name = abn_result.get("legal_name") or value
+    normalized_name = company_search_name(legal_name)
+    queries = build_company_search_queries(normalized_name)
+
+    return {
+        "input_type": input_type,
+        "input_value": value,
+        "alias_abn": alias_abn,
+        "abr": abn_result,
+        "legal_name": legal_name,
+        "normalized_name": normalized_name,
+        "queries": queries,
+    }
+
+
+def collect_news_evidence(
+    company_name: str,
+    queries: List[str],
+    limit: int = 3,
+    max_llm_results: int = 3,
+    australia_only: bool = True,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Query configured news APIs and run the strongest candidates through the LLM.
+    """
+    sample_articles = []
+    providers = (
+        test_serpapi,
+        test_newsapi,
+        test_guardian,
+        test_nyt,
+        test_freenewsapi,
+        test_newsdata,
+        test_webz,
+    )
+
+    for query in queries:
+        for provider in providers:
+            sample_articles.extend(provider(query, limit))
+
+    articles = dedupe_article_metadata(sample_articles)
+    candidates = relevant_llm_candidates(company_name, articles, australia_only)
+    candidates = [
+        article
+        for article in candidates
+        if article_candidate_score(company_name, article, australia_only) >= 90
+    ][:max_llm_results]
+
+    article_payloads = [asdict(article) for article in candidates]
+    if not candidates or max_llm_results <= 0:
+        return article_payloads, []
+
+    records = test_openrouter_many(
+        company_name,
+        candidates,
+        fetch_full_text=False,
+        australia_only=australia_only,
+    )
+    return article_payloads, [evidence_record_to_dict(record) for record in records]
 
 
 # ============================================================
@@ -865,17 +1058,26 @@ def search_entity(payload: SearchRequest):
 
     input_type, input_value, frontend_type = get_single_input_type(barcode, brand, company_or_abn)
 
-    conn = get_conn()
-    cur = conn.cursor()
+    conn = None
+    cur = None
+    database_error = None
 
     try:
-        query = create_search_query(
-            cur,
-            input_type=input_type,
-            input_value=input_value,
-            user_id=payload.user_id,
-        )
-        query_id = query["query_id"]
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            query = create_search_query(
+                cur,
+                input_type=input_type,
+                input_value=input_value,
+                user_id=payload.user_id,
+            )
+            query_id = query["query_id"]
+        except Exception as error:
+            database_error = str(error)
+            query_id = uuid4()
+            conn = None
+            cur = None
 
         pipeline_steps: List[str] = []
         result: Dict[str, Any] = {}
@@ -891,6 +1093,15 @@ def search_entity(payload: SearchRequest):
                 abn_result = verify_abn_with_abr(abn)
                 db_status = "resolved" if abn_result.get("success") else "failed"
 
+                # Normalize and generate search queries if ABR lookup succeeds
+                legal_name = abn_result.get("legal_name")
+                normalized_name = company_search_name(legal_name) if legal_name else None
+                search_queries = build_company_search_queries(normalized_name) if normalized_name else []
+
+                if normalized_name:
+                    pipeline_steps.append("Company name normalization")
+                    pipeline_steps.append("Search query generation")
+
                 result = {
                     "input_type": "abn",
                     "input_value": abn,
@@ -898,12 +1109,14 @@ def search_entity(payload: SearchRequest):
                     "source": "ABR",
                     "company": {
                         "legal_name": abn_result.get("legal_name"),
+                        "normalized_name": normalized_name,
                         "abn": abn_result.get("abn"),
                         "state": abn_result.get("state"),
                         "postcode": abn_result.get("postcode"),
                         "abn_status": abn_result.get("abn_status"),
                         "gst_registered": abn_result.get("gst_registered"),
                     },
+                    "search_queries": search_queries,
                     "abn_verification": abn_result,
                     "confidence": 95 if abn_result.get("success") else 0,
                 }
@@ -913,6 +1126,15 @@ def search_entity(payload: SearchRequest):
                 abr_name_result = search_company_name_with_abr(company_or_abn)
                 db_status = "resolved" if abr_name_result.get("success") else "failed"
 
+                # Normalize and generate search queries if ABR lookup succeeds
+                legal_name = abr_name_result.get("legal_name")
+                normalized_name = company_search_name(legal_name) if legal_name else None
+                search_queries = build_company_search_queries(normalized_name) if normalized_name else []
+
+                if normalized_name:
+                    pipeline_steps.append("Company name normalization")
+                    pipeline_steps.append("Search query generation")
+
                 result = {
                     "input_type": "company_name",
                     "input_value": company_or_abn,
@@ -920,17 +1142,20 @@ def search_entity(payload: SearchRequest):
                     "source": "ABR",
                     "company": {
                         "legal_name": abr_name_result.get("legal_name"),
+                        "normalized_name": normalized_name,
                         "abn": abr_name_result.get("abn"),
                         "state": abr_name_result.get("state"),
                         "postcode": abr_name_result.get("postcode"),
                         "abn_status": abr_name_result.get("abn_status"),
                     },
+                    "search_queries": search_queries,
                     "abn_verification": abr_name_result,
                     "message": abr_name_result.get("message"),
                     "confidence": 90 if abr_name_result.get("success") else 0,
                 }
 
-            update_search_query(cur, query_id, db_status)
+            if cur is not None:
+                update_search_query(cur, query_id, db_status)
 
         # ----------------------------------------------------
         # 2. Barcode flow
@@ -981,7 +1206,8 @@ def search_entity(payload: SearchRequest):
                 "confidence": 75 if product_result.get("success") else 0,
             }
 
-            update_search_query(cur, query_id, db_status)
+            if cur is not None:
+                update_search_query(cur, query_id, db_status)
 
         # ----------------------------------------------------
         # 3. Brand flow
@@ -1014,13 +1240,16 @@ def search_entity(payload: SearchRequest):
                 "confidence": 80 if trademark_result.get("success") else 0,
             }
 
-            update_search_query(cur, query_id, db_status)
+            if cur is not None:
+                update_search_query(cur, query_id, db_status)
 
-        conn.commit()
+        if conn is not None:
+            conn.commit()
 
         return {
             "query_id": str(query_id),
             "status": "success",
+            "database_error": database_error,
             "input_type": frontend_type,
             "input_value": input_value,
             "resolution_status": db_status,
@@ -1029,16 +1258,132 @@ def search_entity(payload: SearchRequest):
         }
 
     except HTTPException:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise
 
     except Exception as e:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        cur.close()
-        conn.close()
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/api/analyse/company")
+def analyse_company_with_reports(
+    company_or_abn: str = Form(...),
+    reports: Optional[List[UploadFile]] = File(default=None),
+    news_limit: int = Form(3),
+    max_llm_results: int = Form(3),
+    max_report_chunks: int = Form(3),
+    australia_only: bool = Form(True),
+):
+    """
+    Resolve a company/ABN, then analyse news evidence and uploaded reports.
+
+    Frontend flow:
+    1. User enters company name or ABN.
+    2. User optionally uploads annual/sustainability reports.
+    3. Backend resolves the legal entity via ABR.
+    4. Backend searches news APIs and scans uploaded reports for evidence.
+    """
+    saved_report_paths = save_uploaded_reports(reports)
+    try:
+        resolution = resolve_company_for_analysis(company_or_abn)
+        normalized_name = resolution["normalized_name"]
+
+        query_id = None
+        database_error = None
+
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            try:
+                query = create_search_query(
+                    cur,
+                    input_type="company_name",
+                    input_value=company_or_abn.strip(),
+                )
+                query_id = str(query["query_id"])
+                update_search_query(
+                    cur,
+                    query["query_id"],
+                    "resolved" if resolution["abr"].get("success") else "failed",
+                )
+                conn.commit()
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as error:
+            database_error = str(error)
+            query_id = str(uuid4())
+
+        pipeline_steps = [
+            "ABR company lookup" if resolution["input_type"] == "company_name" else "ABR ABN verification",
+            "Legal name normalization",
+            "Search query generation",
+            "News API search",
+            "Uploaded report scan",
+            "LLM evidence extraction",
+        ]
+
+        news_candidates, news_records = collect_news_evidence(
+            normalized_name,
+            resolution["queries"],
+            limit=max(1, min(news_limit, 10)),
+            max_llm_results=max(0, min(max_llm_results, 10)),
+            australia_only=australia_only,
+        )
+
+        report_paths = saved_report_paths or resolve_report_paths([], reports_dir=str(REPORTS_DIR))
+        report_records = test_uploaded_reports(
+            normalized_name,
+            report_paths,
+            max_report_chars=3000,
+            max_report_chunks=max(1, min(max_report_chunks, 10)),
+            australia_only=False,
+        )
+
+        report_payloads = [evidence_record_to_dict(record) for record in report_records]
+
+        return {
+            "query_id": query_id,
+            "status": "success",
+            "database_error": database_error,
+            "pipeline_steps": pipeline_steps,
+            "resolution": {
+                "input_type": resolution["input_type"],
+                "input_value": resolution["input_value"],
+                "alias_abn": resolution["alias_abn"],
+                "legal_name": resolution["legal_name"],
+                "normalized_name": normalized_name,
+                "abn": resolution["abr"].get("abn"),
+                "state": resolution["abr"].get("state"),
+                "postcode": resolution["abr"].get("postcode"),
+                "abn_status": resolution["abr"].get("abn_status"),
+                "abr": resolution["abr"],
+            },
+            "search_queries": resolution["queries"],
+            "uploaded_reports": [Path(path).name for path in saved_report_paths],
+            "analysed_reports": [Path(path).name for path in report_paths],
+            "reports_deleted_after_analysis": bool(saved_report_paths),
+            "news": {
+                "candidate_count": len(news_candidates),
+                "candidates": news_candidates,
+                "evidence": news_records,
+            },
+            "reports": {
+                "evidence_count": len(report_payloads),
+                "evidence": report_payloads,
+            },
+        }
+    finally:
+        delete_temporary_reports(saved_report_paths)
 
 
 # ============================================================
@@ -1096,6 +1441,90 @@ def test_ip_australia_token():
     if not token:
         return {"status": "error", "message": "Unable to obtain token"}
     return {"status": "success", "token_preview": token[:20]}
+
+
+# ============================================================
+# Pipeline Utility Endpoints
+# ============================================================
+
+@app.post("/api/pipeline/normalize-company-name")
+def normalize_company_name_endpoint(payload: Dict[str, str]):
+    """
+    Normalize a company legal name to search-friendly format.
+
+    Removes legal suffixes like LIMITED, PTY, etc. and converts to proper case.
+
+    Example:
+    POST /api/pipeline/normalize-company-name
+    {"company_name": "BHP GROUP LIMITED"}
+    
+    Response:
+    {"original": "BHP GROUP LIMITED", "normalized": "BHP"}
+    """
+    company_name = payload.get("company_name", "").strip()
+    if not company_name:
+        raise HTTPException(status_code=400, detail="company_name is required")
+    
+    normalized = company_search_name(company_name)
+    return {
+        "original": company_name,
+        "normalized": normalized,
+    }
+
+
+@app.post("/api/pipeline/build-search-queries")
+def build_search_queries_endpoint(payload: Dict[str, str]):
+    """
+    Build targeted search queries for a normalized company name.
+
+    Queries are generated based on company type hints (mining, food retail, agribusiness).
+
+    Example:
+    POST /api/pipeline/build-search-queries
+    {"company_name": "BHP"}
+    
+    Response:
+    {"company_name": "BHP", "queries": ["BHP biodiversity Australia", ...]}
+    """
+    company_name = payload.get("company_name", "").strip()
+    if not company_name:
+        raise HTTPException(status_code=400, detail="company_name is required")
+    
+    queries = build_company_search_queries(company_name)
+    return {
+        "company_name": company_name,
+        "query_count": len(queries),
+        "queries": queries,
+    }
+
+
+@app.post("/api/pipeline/normalize-and-query")
+def normalize_and_query_endpoint(payload: Dict[str, str]):
+    """
+    Combined endpoint: normalize company name AND build search queries in one call.
+
+    Useful for the frontend to get both normalized name and search queries.
+
+    Example:
+    POST /api/pipeline/normalize-and-query
+    {"company_name": "BHP GROUP LIMITED"}
+    
+    Response:
+    {"original": "BHP GROUP LIMITED", "normalized": "BHP", "queries": [...]}
+    """
+    company_name = payload.get("company_name", "").strip()
+    if not company_name:
+        raise HTTPException(status_code=400, detail="company_name is required")
+    
+    normalized = company_search_name(company_name)
+    queries = build_company_search_queries(normalized)
+    
+    return {
+        "original": company_name,
+        "normalized": normalized,
+        "query_count": len(queries),
+        "queries": queries,
+    }
 
 
 @app.get("/api/trademark/search/{brand}")

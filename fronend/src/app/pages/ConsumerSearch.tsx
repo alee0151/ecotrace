@@ -27,10 +27,47 @@ const TopoSvg = ({ className = '' }: { className?: string }) => (
   </svg>
 );
 
+type EvidenceRecord = {
+  location?: string | null;
+  activity_type?: string | null;
+  biodiversity_signal?: string;
+  evidence_type?: string;
+  source_type?: string;
+  source?: string;
+  source_url?: string;
+  confidence?: number;
+  llm_confidence?: number;
+};
+
+type CompanyAnalysis = {
+  pipeline_steps: string[];
+  resolution: {
+    legal_name?: string;
+    normalized_name?: string;
+    abn?: string;
+    state?: string;
+    abr?: { success?: boolean; message?: string };
+  };
+  search_queries: string[];
+  uploaded_reports: string[];
+  analysed_reports: string[];
+  news: {
+    candidate_count: number;
+    evidence: EvidenceRecord[];
+  };
+  reports: {
+    evidence_count: number;
+    evidence: EvidenceRecord[];
+  };
+};
+
 export function ConsumerSearch() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<'barcode' | 'brand' | 'company'>('barcode');
+  const [mode, setMode] = useState<'barcode' | 'brand' | 'company'>('company');
   const [value, setValue] = useState('');
+  const [reportFiles, setReportFiles] = useState<File[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<CompanyAnalysis | null>(null);
   const [resolved, setResolved] = useState<null | {
     brand: string;
     product: string;
@@ -82,6 +119,58 @@ export function ConsumerSearch() {
     }
 
     try {
+      setIsLoading(true);
+      setAnalysis(null);
+
+      if (searchMode === 'company') {
+        const formData = new FormData();
+        formData.append('company_or_abn', searchValue);
+        formData.append('news_limit', '3');
+        formData.append('max_llm_results', '3');
+        formData.append('max_report_chunks', '3');
+        formData.append('australia_only', 'true');
+        reportFiles.forEach(file => formData.append('reports', file));
+
+        const res = await fetch('http://127.0.0.1:8000/api/analyse/company', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.detail || 'Analysis failed');
+        }
+
+        if (data.query_id) {
+          localStorage.setItem('query_id', data.query_id);
+        }
+        localStorage.setItem('company_analysis', JSON.stringify(data));
+        console.log('Company analysis:', data);
+        setAnalysis(data);
+
+        const resolution = data.resolution || {};
+        const evidenceCount =
+          (data.news?.evidence?.length || 0) + (data.reports?.evidence?.length || 0);
+
+        setResolved({
+          brand: resolution.normalized_name || searchValue,
+          product: resolution.legal_name || resolution.normalized_name || searchValue,
+          parent: resolution.legal_name || 'Unknown company',
+          abn: resolution.abn || 'N/A',
+          score: Math.min(95, 45 + evidenceCount * 10),
+          source: 'ABR + news APIs + uploaded reports',
+        });
+
+        setTimeout(() => {
+          resultsRef.current?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+        }, 100);
+        return;
+      }
+
       const requestBody = buildRequestBody(searchMode, searchValue);
 
       const res = await fetch('http://127.0.0.1:8000/api/search', {
@@ -154,7 +243,9 @@ export function ConsumerSearch() {
       }, 100);
     } catch (err) {
       console.error(err);
-      alert('Error connecting to backend');
+      alert(err instanceof Error ? err.message : 'Error connecting to backend');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -229,20 +320,31 @@ export function ConsumerSearch() {
               />
               <button
                 onClick={resolve}
-                className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]"
+                disabled={isLoading}
+                className="inline-flex items-center gap-1.5 px-5 h-10 bg-emerald-500 hover:bg-emerald-400 disabled:bg-stone-300 disabled:text-stone-600 text-stone-950 rounded-lg text-[13px] shadow-[0_8px_24px_-8px_rgba(16,185,129,0.6)]"
               >
-                Analyse <ArrowRight size={14} />
+                {isLoading ? 'Analysing...' : 'Analyse'} <ArrowRight size={14} />
               </button>
             </div>
 
             <div className="mx-2 mb-2 p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 group hover:bg-stone-100 hover:border-stone-300 transition-colors cursor-pointer text-center relative">
-              <input type="file" accept=".pdf" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+              <input
+                type="file"
+                accept=".pdf,.txt,.md,.markdown,.csv,.json,.html,.htm"
+                multiple
+                onChange={event => setReportFiles(Array.from(event.target.files || []))}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
               <div className="flex flex-col items-center justify-center gap-1.5 pointer-events-none">
                 <div className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
                   <FileText size={14} />
                 </div>
-                <div className="text-[12px] font-medium text-stone-700">Upload product manual or CSR report</div>
-                <div className="text-[10px] text-stone-400">PDFs only (max 10MB)</div>
+                <div className="text-[12px] font-medium text-stone-700">
+                  {reportFiles.length ? `${reportFiles.length} report${reportFiles.length === 1 ? '' : 's'} selected` : 'Upload annual or sustainability reports'}
+                </div>
+                <div className="text-[10px] text-stone-400">
+                  PDF, text, HTML, CSV or JSON. Reports are analysed with the company search.
+                </div>
               </div>
             </div>
           </div>
@@ -367,6 +469,57 @@ export function ConsumerSearch() {
                 </button>
               </div>
             </Card>
+
+            {analysis && (
+              <Card className="p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Analysis pipeline</div>
+                    <div className="text-[18px] text-stone-900 mt-1">{analysis.resolution.legal_name || analysis.resolution.normalized_name}</div>
+                    <div className="text-[12px] text-stone-500 mt-1">
+                      {analysis.search_queries.length} search queries · {analysis.news.candidate_count} news candidates · {analysis.analysed_reports.length} report files checked
+                    </div>
+                  </div>
+                  <Chip tone={analysis.resolution.abr?.success ? 'emerald' : 'amber'}>
+                    {analysis.resolution.abr?.success ? 'ABR resolved' : 'ABR needs review'}
+                  </Chip>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {analysis.pipeline_steps.map(step => (
+                    <div key={step} className="h-10 px-3 rounded-lg bg-stone-50 border border-stone-100 flex items-center gap-2 text-[12px] text-stone-700">
+                      <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                      <span className="truncate">{step}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {(analysis.news.evidence.length > 0 || analysis.reports.evidence.length > 0) && (
+                  <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {[...analysis.reports.evidence, ...analysis.news.evidence].slice(0, 4).map((record, index) => (
+                      <div
+                        key={[
+                          record.source_type || 'evidence',
+                          record.source_url || record.source || 'source',
+                          record.location || 'no-location',
+                          record.biodiversity_signal || 'signal',
+                          index,
+                        ].join('|')}
+                        className="p-4 rounded-xl border border-stone-100 bg-white"
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <Chip tone={record.source_type === 'report' ? 'blue' : 'stone'}>{record.source_type || 'evidence'}</Chip>
+                          <span className="text-[11px] text-stone-400 truncate">{record.source}</span>
+                        </div>
+                        <div className="text-[13px] text-stone-900">{record.biodiversity_signal || 'Biodiversity evidence found'}</div>
+                        <div className="text-[12px] text-stone-500 mt-1">{record.location || 'Location not specified'} · {record.evidence_type || 'unknown evidence type'}</div>
+                        <div className="mt-2"><Confidence value={Math.round((record.confidence || record.llm_confidence || 0.5) * 100)} /></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <Card className="p-6 md:col-span-1">

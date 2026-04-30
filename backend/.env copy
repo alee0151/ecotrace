@@ -1,0 +1,28 @@
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=ecotrace
+DB_USER=postgres
+DB_PASSWORD=123456
+
+#ABN LOOK UP API
+ABR_GUID=22576142-644e-41c3-b366-1524ed25a0dd
+#Australian Trade Mark Search API
+IP_AUSTRALIA_CLIENT_ID=vSp6sSif5IpUnxvWWhDVOP4GUyz2V2ZC
+IP_AUSTRALIA_CLIENT_SECRET=PVDt7LP2h6s_k_akpwxeC_7kRxR4r4BC7ZcazT57ky4bDpJb01ztCbq5WfhwZdVy
+IP_AUSTRALIA_TOKEN_URL=https://test.api.ipaustralia.gov.au/public/external-token-api/v1/access_token
+IP_AUSTRALIA_TRADEMARK_URL=https://test.api.ipaustralia.gov.au/public/australian-trade-mark-search-api/v1
+
+SERPAPI_KEY=4176d723b9f87ef2be98a43b021324964deecd91e44cab60d6e824dc5e7483df
+NEWSAPI_KEY=fef6287a5dea4bd3ba69214536c3b118
+WEBZ_API_KEY=186bdc3a-afdc-45db-9244-21dff1ce9405
+GUARDIAN_API_KEY=d7ef39b0-639d-4038-be9a-c7b4c4d7e55d
+NYT_API_KEY=97MvkB2nJsAI4TEdDDX9ylUE1pDLKt4GU6kij4fe2jS6JT5n
+FREENEWS_API_KEY=1ddcc529f8eef43359e6673682ea37ecfc38d888eef531372d403b5b193aec48
+NEWSDATA_IO_API_KEY=pub_be05600ad834465ebc856efda8e1130d
+
+OPENROUTER_API_KEY=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
+OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+LLM_PROVIDER=nvidia
+NVIDIA_API_KEY=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
+NVIDIA_NIM_MODEL=nvidia/nemotron-3-super-120b-a12b

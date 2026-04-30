@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import Slider from 'react-slick';
 import {
@@ -9,6 +9,7 @@ import {
   Database, ClipboardCheck, ArrowRight, Plus, Minus,
 } from 'lucide-react';
 import { Card, Chip, RiskBadge } from '../components/shared';
+import { analysisEvidenceCards, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
 
 type PageId = 'analyse' | 'knowledge';
 
@@ -175,6 +176,10 @@ function SlideCard({ title, badge, children }: {
 
 export function CompanyOverview() {
   const navigate = useNavigate();
+  const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const companyName = companyDisplayName(analysis);
+  const abn = analysis?.resolution?.abn;
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [pageState, setPageState] = useState<'ready' | 'loading' | 'empty' | 'error'>('ready');
@@ -197,22 +202,22 @@ export function CompanyOverview() {
             </div>
             <div className="flex-1 min-w-[260px]">
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="text-[20px] text-stone-900 leading-tight">BHP Group Limited</div>
+                <div className="text-[20px] text-stone-900 leading-tight">{companyName}</div>
                 <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
-                <Chip tone="blue">ASX: BHP</Chip>
+                <Chip tone="blue">{analysis?.resolution?.normalized_name || 'ASX: BHP'}</Chip>
                 <Chip tone="stone">Public</Chip>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                   <Radio size={10} /> High coverage
                 </span>
               </div>
               <div className="text-[12.5px] text-stone-500 mt-1.5 flex items-center gap-3 flex-wrap">
-                <span>ABN 49 004 028 077</span>
+                <span>{abn ? `ABN ${abn}` : 'ABN pending'}</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
                 <span className="inline-flex items-center gap-1"><Factory size={11} /> Mining & Resources</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
                 <span className="inline-flex items-center gap-1"><MapPin size={11} /> Melbourne, VIC · Australia</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> Updated 2h ago</span>
+                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> {evidenceCards.length ? `${evidenceCards.length} live evidence records` : 'Updated 2h ago'}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -508,10 +513,10 @@ export function CompanyOverview() {
                 <SlideCard title="Provenance" badge={<Chip tone="emerald">Auditable</Chip>}>
                   <MetricExplain>Every claim is traceable to its underlying source document.</MetricExplain>
                   <div className="space-y-3 mt-4 text-[12.5px]">
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Traceable claims</span><span className="text-stone-900 tabular-nums">142</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">With source attached</span><span className="text-emerald-700 tabular-nums">131 (92%)</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Avg extraction conf.</span><span className="text-stone-900 tabular-nums">94%</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Latest evidence</span><span className="text-stone-900">2h ago</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Traceable claims</span><span className="text-stone-900 tabular-nums">{evidenceCards.length || 142}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">News evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.news?.evidence?.length ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Report evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.reports?.evidence_count ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Avg extraction conf.</span><span className="text-stone-900 tabular-nums">{evidenceCards.length ? `${Math.round(evidenceCards.reduce((sum, item) => sum + item.conf, 0) / evidenceCards.length)}%` : '94%'}</span></div>
                   </div>
                   <button onClick={() => navigate('/app/knowledge')} className="mt-4 w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-stone-200 hover:bg-stone-50 text-[12.5px] text-stone-800">
                     <FileCheck2 size={13} /> Open full audit trail
