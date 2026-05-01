@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FileText, Newspaper, Gavel, FlaskConical, Building2, CheckCircle2, ExternalLink, X, Info } from 'lucide-react';
 import { Card, Chip, Confidence, SectionTitle } from '../components/shared';
 import { PageShell } from '../components/PageShell';
+import { analysisEvidenceCards, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
 
 const nodes = [
   { id: 'company', label: 'BHP Group', x: 50, y: 50, kind: 'entity', desc: 'Parent company entity resolved via ABR.' },
@@ -23,7 +24,7 @@ const edges = [
 
 const sourceIcon = (k?: string) => k === 'gov' ? Gavel : k === 'science' ? FlaskConical : k === 'audit' ? FileText : k === 'news' ? Newspaper : FileText;
 
-const timeline = [
+const fallbackTimeline = [
   { date: '14 Apr 2026', title: 'Expansion referral lodged', source: 'EPBC Act', conf: 95 },
   { date: '02 Apr 2026', title: 'Restoration milestone claim', source: 'BHP Sustainability Report', conf: 88 },
   { date: '21 Mar 2026', title: 'Turbidity breach observation', source: 'WA EPA audit', conf: 82 },
@@ -32,6 +33,21 @@ const timeline = [
 
 export function KnowledgeGraph() {
   const [activeNode, setActiveNode] = useState<typeof nodes[0] | null>(null);
+  const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const companyName = companyDisplayName(analysis);
+  const graphNodes = useMemo(
+    () => nodes.map(node => node.id === 'company' ? { ...node, label: companyName } : node),
+    [companyName],
+  );
+  const timeline = evidenceCards.length
+    ? evidenceCards.map(item => ({
+        date: item.date,
+        title: item.title,
+        source: item.source,
+        conf: item.conf,
+      }))
+    : fallbackTimeline;
 
   return (
     <PageShell sectionMarker="§ 03 · KNOWLEDGE GRAPH" coords="PROVENANCE · CLAIM-CHAIN · TEMPORAL">
@@ -51,12 +67,12 @@ export function KnowledgeGraph() {
         <div className="relative h-[520px] bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.06),transparent_60%),radial-gradient(ellipse_at_bottom,rgba(59,130,246,0.06),transparent_60%)]">
           <svg className="absolute inset-0 w-full h-full">
             {edges.map(([a, b], i) => {
-              const A = nodes.find(n => n.id === a)!;
-              const B = nodes.find(n => n.id === b)!;
+              const A = graphNodes.find(n => n.id === a)!;
+              const B = graphNodes.find(n => n.id === b)!;
               return <line key={i} x1={`${A.x}%`} y1={`${A.y}%`} x2={`${B.x}%`} y2={`${B.y}%`} stroke="#d6d3d1" strokeWidth="1.5" strokeDasharray="4 4" />;
             })}
           </svg>
-          {nodes.map(n => {
+          {graphNodes.map(n => {
             const style = { left: `${n.x}%`, top: `${n.y}%` } as const;
             if (n.kind === 'entity') return (
               <button key={n.id} onClick={() => setActiveNode(n)} className="absolute -translate-x-1/2 -translate-y-1/2 hover:scale-105 transition-transform z-10" style={style}>

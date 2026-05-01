@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import Slider from 'react-slick';
 import {
@@ -9,6 +9,7 @@ import {
   Database, ClipboardCheck, ArrowRight, Plus, Minus,
 } from 'lucide-react';
 import { Card, Chip, RiskBadge } from '../components/shared';
+import { analysisEvidenceCards, companyDisplayName, companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
 
 type PageId = 'analyse' | 'knowledge';
 
@@ -175,6 +176,11 @@ function SlideCard({ title, badge, children }: {
 
 export function CompanyOverview() {
   const navigate = useNavigate();
+  const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const companyName = companyDisplayName(analysis);
+  const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
+  const abn = profile.abn;
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [pageState, setPageState] = useState<'ready' | 'loading' | 'empty' | 'error'>('ready');
@@ -197,22 +203,22 @@ export function CompanyOverview() {
             </div>
             <div className="flex-1 min-w-[260px]">
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="text-[20px] text-stone-900 leading-tight">BHP Group Limited</div>
+                <div className="text-[20px] text-stone-900 leading-tight">{companyName}</div>
                 <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
-                <Chip tone="blue">ASX: BHP</Chip>
+                <Chip tone="blue">{analysis?.resolution?.normalized_name || 'ASX: BHP'}</Chip>
                 <Chip tone="stone">Public</Chip>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                   <Radio size={10} /> High coverage
                 </span>
               </div>
               <div className="text-[12.5px] text-stone-500 mt-1.5 flex items-center gap-3 flex-wrap">
-                <span>ABN 49 004 028 077</span>
+                <span>{abn ? `ABN ${abn}` : 'ABN pending'}</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><Factory size={11} /> Mining & Resources</span>
+                <span className="inline-flex items-center gap-1"><Factory size={11} /> {profile.sector}</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><MapPin size={11} /> Melbourne, VIC · Australia</span>
+                <span className="inline-flex items-center gap-1"><MapPin size={11} /> {profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> Updated 2h ago</span>
+                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> {evidenceCards.length ? `${evidenceCards.length} live evidence records` : 'Updated 2h ago'}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -228,13 +234,13 @@ export function CompanyOverview() {
           <Card className="p-5">
             <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500 mb-3">Profile</div>
             <div className="text-[13px] text-stone-700 leading-relaxed">
-              Diversified resources major with iron ore, copper, and metallurgical coal operations across Australia, Chile, and Brazil.
+              {companyName} is resolved through ABR and analysed against configured news sources plus any uploaded company reports.
             </div>
             <div className="grid grid-cols-2 gap-3 mt-4 text-[12px]">
-              <div><div className="text-stone-500">Employees</div><div className="text-stone-900">80,000</div></div>
-              <div><div className="text-stone-500">Revenue (FY25)</div><div className="text-stone-900">US$53.8B</div></div>
-              <div><div className="text-stone-500">Sites tracked</div><div className="text-stone-900">62</div></div>
-              <div><div className="text-stone-500">Countries</div><div className="text-stone-900">9</div></div>
+              <div><div className="text-stone-500">ABN status</div><div className="text-stone-900">{analysis?.resolution?.abn_status || 'Verified'}</div></div>
+              <div><div className="text-stone-500">State</div><div className="text-stone-900">{profile.state}</div></div>
+              <div><div className="text-stone-500">Evidence records</div><div className="text-stone-900">{profile.evidenceCount}</div></div>
+              <div><div className="text-stone-500">News candidates</div><div className="text-stone-900">{profile.newsCandidateCount}</div></div>
             </div>
           </Card>
 
@@ -508,10 +514,10 @@ export function CompanyOverview() {
                 <SlideCard title="Provenance" badge={<Chip tone="emerald">Auditable</Chip>}>
                   <MetricExplain>Every claim is traceable to its underlying source document.</MetricExplain>
                   <div className="space-y-3 mt-4 text-[12.5px]">
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Traceable claims</span><span className="text-stone-900 tabular-nums">142</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">With source attached</span><span className="text-emerald-700 tabular-nums">131 (92%)</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Avg extraction conf.</span><span className="text-stone-900 tabular-nums">94%</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Latest evidence</span><span className="text-stone-900">2h ago</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Traceable claims</span><span className="text-stone-900 tabular-nums">{evidenceCards.length || 142}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">News evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.news?.evidence?.length ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Report evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.reports?.evidence_count ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-stone-600">Avg extraction conf.</span><span className="text-stone-900 tabular-nums">{evidenceCards.length ? `${Math.round(evidenceCards.reduce((sum, item) => sum + item.conf, 0) / evidenceCards.length)}%` : '94%'}</span></div>
                   </div>
                   <button onClick={() => navigate('/app/knowledge')} className="mt-4 w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-stone-200 hover:bg-stone-50 text-[12.5px] text-stone-800">
                     <FileCheck2 size={13} /> Open full audit trail
@@ -612,13 +618,13 @@ export function CompanyOverview() {
       </div>
 
       {/* === MODALS === */}
-      {showWatchlist && <WatchlistModal onClose={() => setShowWatchlist(false)} />}
-      {showExport && <ExportModal onClose={() => setShowExport(false)} />}
+      {showWatchlist && <WatchlistModal companyName={companyName} onClose={() => setShowWatchlist(false)} />}
+      {showExport && <ExportModal companyName={companyName} onClose={() => setShowExport(false)} />}
     </div>
   );
 }
 
-function WatchlistModal({ onClose }: { onClose: () => void }) {
+function WatchlistModal({ companyName, onClose }: { companyName: string; onClose: () => void }) {
   const [freq, setFreq] = useState('weekly');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -631,7 +637,7 @@ function WatchlistModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-[13px] text-stone-600">Track <b className="text-stone-900">BHP Group Limited</b> and receive alerts when its biodiversity risk score, evidence base, or coverage changes materially.</p>
+          <p className="text-[13px] text-stone-600">Track <b className="text-stone-900">{companyName}</b> and receive alerts when its biodiversity risk score, evidence base, or coverage changes materially.</p>
           <div>
             <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Alert frequency</div>
             <div className="grid grid-cols-3 gap-2">
@@ -651,7 +657,7 @@ function WatchlistModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ExportModal({ onClose }: { onClose: () => void }) {
+function ExportModal({ companyName, onClose }: { companyName: string; onClose: () => void }) {
   const [sections, setSections] = useState({ hero: true, summary: true, composition: true, tnfd: true, findings: true, peers: false, evidence: true, timeline: false });
   const toggle = (k: keyof typeof sections) => setSections(s => ({ ...s, [k]: !s[k] }));
   return (
@@ -663,7 +669,7 @@ function ExportModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-[13px] text-stone-600">Generate an investor-ready PDF dossier for <b className="text-stone-900">BHP Group Limited</b>.</p>
+          <p className="text-[13px] text-stone-600">Generate an investor-ready PDF dossier for <b className="text-stone-900">{companyName}</b>.</p>
           <div>
             <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Include sections</div>
             <div className="grid grid-cols-2 gap-2">

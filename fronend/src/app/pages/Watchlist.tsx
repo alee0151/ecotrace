@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Building2, TrendingUp, TrendingDown, Minus, Bell, Edit2, Trash2, MoreVertical,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Card, Chip, RiskBadge } from '../components/shared';
 import type { PageId } from '../components/Sidebar';
+import { companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
 
 type WatchlistCompany = {
   id: string;
@@ -15,7 +16,7 @@ type WatchlistCompany = {
   abn: string;
   industry: string;
   score: number;
-  riskLevel: 'Low' | 'Medium' | 'High';
+  riskLevel: 'Low' | 'Medium' | 'High' | 'Critical';
   change7d: number;
   confidence: number;
   lastUpdated: string;
@@ -51,8 +52,31 @@ const scoreBreakdown = [
 
 export function Watchlist() {
   const navigate = useNavigate();
+  const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const latestCompany = useMemo<WatchlistCompany | null>(() => {
+    if (!analysis?.resolution) return null;
+    const profile = companyProfileFromAnalysis(analysis);
+    return {
+      id: 'latest-analysis',
+      name: profile.name,
+      abn: profile.abn,
+      industry: profile.sector,
+      score: profile.score,
+      riskLevel: profile.riskLevel,
+      change7d: 0,
+      confidence: profile.confidence,
+      lastUpdated: 'Latest search',
+      alerts: profile.riskLevel === 'Critical' || profile.riskLevel === 'High' ? 1 : 0,
+    };
+  }, [analysis]);
+  const dynamicWatchlist = useMemo(
+    () => latestCompany
+      ? [latestCompany, ...watchlistData.filter(company => company.abn !== latestCompany.abn)]
+      : watchlistData,
+    [latestCompany],
+  );
   const [addCompanyOpen, setAddCompanyOpen] = useState(false);
-  const [selectedCompany, setSelectedCompany] = useState<WatchlistCompany | null>(watchlistData[0]);
+  const [selectedCompany, setSelectedCompany] = useState<WatchlistCompany | null>(dynamicWatchlist[0]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterActive, setFilterActive] = useState('All');
 
@@ -68,7 +92,7 @@ export function Watchlist() {
             <div className="text-[24px] text-stone-900 mb-1">My Watchlist</div>
             <div className="text-[13px] text-stone-600 mb-2">Track biodiversity risk changes across your saved companies</div>
             <div className="text-[11px] text-stone-500 flex items-center gap-2 flex-wrap">
-              <span className="inline-flex items-center gap-1"><Star size={10} className="text-emerald-600" /> Watching 6 companies</span>
+              <span className="inline-flex items-center gap-1"><Star size={10} className="text-emerald-600" /> Watching {dynamicWatchlist.length} companies</span>
               <span className="w-1 h-1 rounded-full bg-stone-300" />
               <span className="inline-flex items-center gap-1"><Bell size={10} className="text-amber-600" /> 2 alerts active</span>
               <span className="w-1 h-1 rounded-full bg-stone-300" />
@@ -153,7 +177,7 @@ export function Watchlist() {
 
                   {/* Table Rows */}
                   <div className="flex flex-col gap-1.5">
-                    {watchlistData.map(company => (
+                    {dynamicWatchlist.map(company => (
                       <button
                         key={company.id}
                         onClick={() => setSelectedCompany(company)}

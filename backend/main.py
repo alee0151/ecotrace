@@ -74,13 +74,14 @@ Version history
 
 import os
 import re
+from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -96,6 +97,14 @@ from abn_pipeline import (
 )
 from barcode_pipeline import run_barcode_phase
 from brand_pipeline import run_brand_phase, get_ip_australia_access_token, diagnose_token
+from upload_endpoint import router as upload_router
+from analysis_pipeline import (
+    collect_news_evidence,
+    collect_report_evidence,
+    delete_temporary_reports,
+    resolve_company_for_analysis,
+    save_uploaded_reports,
+)
 
 # ------------------------------------------------------------------
 # DB write helpers
@@ -113,7 +122,7 @@ from db_writer import (
 # Environment
 # ============================================================
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 
 # ============================================================
@@ -148,6 +157,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(upload_router)
 
 
 # ============================================================
@@ -605,6 +616,139 @@ def search_entity(payload: SearchRequest):
     finally:
         cur.close()
         conn.close()
+
+
+# ============================================================
+# Company Evidence Analysis
+# ============================================================
+
+@app.post("/api/analyse/company")
+def analyse_company_with_reports(
+    company_or_abn: str = Form(...),
+    reports: Optional[List[UploadFile]] = File(default=None),
+    news_limit: int = Form(3),
+    max_llm_results: int = Form(3),
+    max_report_chunks: int = Form(3),
+    australia_only: bool = Form(True),
+):
+    """
+    Resolve a company/ABN, then analyse news evidence and uploaded reports.
+
+    This endpoint keeps the LLM/report flow separate from the consumer
+    barcode/brand/company resolver used by POST /api/search.
+    """
+    saved_report_paths = save_uploaded_reports(reports)
+
+    try:
+        resolution = resolve_company_for_analysis(company_or_abn)
+        normalized_name = resolution["normalized_name"]
+        query_id = None
+        database_error = None
+
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            try:
+                query = create_search_query(
+                    cur,
+                    input_type="company_name",
+                    input_value=company_or_abn.strip(),
+                )
+                query_id = str(query["query_id"])
+                update_search_query(
+                    cur,
+                    query["query_id"],
+                    "resolved" if resolution["abr"].get("success") else "failed",
+                )
+                conn.commit()
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as error:
+            database_error = str(error)
+            query_id = str(uuid4())
+
+        pipeline_steps = [
+            "ABR company lookup" if resolution["input_type"] == "company_name" else "ABR ABN verification",
+            "Legal name normalization",
+            "Search query generation",
+            "News API search",
+            "Uploaded report scan",
+            "LLM evidence extraction",
+        ]
+
+        news_candidates, news_records = collect_news_evidence(
+            normalized_name,
+            resolution["queries"],
+            limit=max(1, min(news_limit, 10)),
+            max_llm_results=max(0, min(max_llm_results, 10)),
+            australia_only=australia_only,
+        )
+
+        report_paths = saved_report_paths
+        report_records = collect_report_evidence(
+            normalized_name,
+            report_paths,
+            max_report_chunks=max_report_chunks,
+        )
+
+        return {
+            "query_id": query_id,
+            "status": "success",
+            "database_error": database_error,
+            "pipeline_steps": pipeline_steps,
+            "resolution": {
+                "input_type": resolution["input_type"],
+                "input_value": resolution["input_value"],
+                "alias_abn": resolution["alias_abn"],
+                "legal_name": resolution["legal_name"],
+                "normalized_name": normalized_name,
+                "abn": resolution["abr"].get("abn"),
+                "state": resolution["abr"].get("state"),
+                "postcode": resolution["abr"].get("postcode"),
+                "abn_status": resolution["abr"].get("abn_status"),
+                "abr": resolution["abr"],
+            },
+            "search_queries": resolution["queries"],
+            "uploaded_reports": [path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for path in saved_report_paths],
+            "analysed_reports": [path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for path in report_paths],
+            "reports_deleted_after_analysis": bool(saved_report_paths),
+            "news": {
+                "candidate_count": len(news_candidates),
+                "candidates": news_candidates,
+                "evidence": news_records,
+            },
+            "reports": {
+                "evidence_count": len(report_records),
+                "evidence": report_records,
+            },
+        }
+    finally:
+        delete_temporary_reports(saved_report_paths)
+
+
+@app.post("/api/analyse/company/resolve")
+def resolve_company_analysis_target(company_or_abn: str = Form(...)):
+    """
+    Resolve company identity quickly before slower news/report evidence extraction.
+    """
+    resolution = resolve_company_for_analysis(company_or_abn)
+    return {
+        "status": "success",
+        "resolution": {
+            "input_type": resolution["input_type"],
+            "input_value": resolution["input_value"],
+            "alias_abn": resolution["alias_abn"],
+            "legal_name": resolution["legal_name"],
+            "normalized_name": resolution["normalized_name"],
+            "abn": resolution["abr"].get("abn"),
+            "state": resolution["abr"].get("state"),
+            "postcode": resolution["abr"].get("postcode"),
+            "abn_status": resolution["abr"].get("abn_status"),
+            "abr": resolution["abr"],
+        },
+        "search_queries": resolution["queries"],
+    }
 
 
 # ============================================================
