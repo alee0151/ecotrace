@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { Card, Chip, RiskBadge } from '../components/shared';
 import type { PageId } from '../components/Sidebar';
-import { companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
+import { allEvidenceRecords, companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
 
 type WatchlistCompany = {
   id: string;
@@ -75,6 +75,27 @@ export function Watchlist() {
       : watchlistData,
     [latestCompany],
   );
+  const latestRiskBullets = useMemo(() => {
+    const records = allEvidenceRecords(analysis);
+    if (records.length) {
+      return records.slice(0, 3).map(record =>
+        `${record.biodiversity_signal || record.evidence_type || 'Biodiversity evidence'}${record.location ? ` in ${record.location}` : ''}`
+      );
+    }
+    if (analysis) {
+      const profile = companyProfileFromAnalysis(analysis);
+      return [
+        `${profile.newsCandidateCount} news candidate${profile.newsCandidateCount === 1 ? '' : 's'} reviewed`,
+        profile.reportCount ? `${profile.reportCount} uploaded report${profile.reportCount === 1 ? '' : 's'} checked` : 'No uploaded report evidence',
+        `ABR entity resolved for ${profile.name}`,
+      ];
+    }
+    return [
+      'Operations near 4 EPBC-listed sensitive areas',
+      'Tier-1 supplier linked to land-clearing event in QLD',
+      'ASX filing noted TNFD alignment underway but incomplete',
+    ];
+  }, [analysis]);
   const [addCompanyOpen, setAddCompanyOpen] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<WatchlistCompany | null>(dynamicWatchlist[0]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -343,9 +364,15 @@ export function Watchlist() {
                 <div className="mb-5">
                   <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Key risks</div>
                   <ul className="space-y-2 text-[12px] text-stone-700">
-                    <li className="flex gap-2"><span className="w-1 h-1 rounded-full bg-rose-500 mt-1.5 shrink-0" /> Operations near 4 EPBC-listed sensitive areas</li>
-                    <li className="flex gap-2"><span className="w-1 h-1 rounded-full bg-amber-500 mt-1.5 shrink-0" /> Tier-1 supplier linked to land-clearing event in QLD</li>
-                    <li className="flex gap-2"><span className="w-1 h-1 rounded-full bg-blue-500 mt-1.5 shrink-0" /> ASX filing noted TNFD alignment underway but incomplete</li>
+                    {(selectedCompany.id === 'latest-analysis' ? latestRiskBullets : [
+                      'Operations near 4 EPBC-listed sensitive areas',
+                      'Tier-1 supplier linked to land-clearing event in QLD',
+                      'ASX filing noted TNFD alignment underway but incomplete',
+                    ]).map((risk, index) => (
+                      <li key={`${risk}-${index}`} className="flex gap-2">
+                        <span className={`w-1 h-1 rounded-full mt-1.5 shrink-0 ${index === 0 ? 'bg-rose-500' : index === 1 ? 'bg-amber-500' : 'bg-blue-500'}`} /> {risk}
+                      </li>
+                    ))}
                   </ul>
                 </div>
 

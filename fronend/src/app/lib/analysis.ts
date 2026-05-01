@@ -109,7 +109,7 @@ export function companyDisplayName(analysis: BackendCompanyAnalysis | null): str
     analysis?.resolution?.legal_name ||
     analysis?.resolution?.normalized_name ||
     analysis?.resolution?.input_value ||
-    'BHP Group Limited'
+    'No company selected'
   );
 }
 

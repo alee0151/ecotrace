@@ -181,6 +181,29 @@ export function CompanyOverview() {
   const companyName = companyDisplayName(analysis);
   const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
   const abn = profile.abn;
+  const score = profile.score;
+  const riskLevel = profile.riskLevel;
+  const confidence = profile.confidence;
+  const sourceCount = Math.max(1, profile.evidenceCount + profile.newsCandidateCount + profile.reportCount);
+  const coverage = Math.min(100, Math.max(35, 45 + profile.evidenceCount * 8 + profile.newsCandidateCount * 2 + profile.reportCount * 10));
+  const peerPercentile = Math.min(95, Math.max(20, Math.round(score * 0.9)));
+  const change30d = 0;
+  const dynamicExposureTags = [
+    profile.sector,
+    `${profile.newsCandidateCount} news candidate${profile.newsCandidateCount === 1 ? '' : 's'}`,
+    `${profile.evidenceCount} evidence record${profile.evidenceCount === 1 ? '' : 's'}`,
+    profile.reportCount ? `${profile.reportCount} uploaded report${profile.reportCount === 1 ? '' : 's'}` : 'No uploaded report evidence',
+  ];
+  const summaryBullets = evidenceCards.length
+    ? evidenceCards.slice(0, 3).map(card => ({
+        title: card.type,
+        text: `${card.title}${card.location ? ` in ${card.location}` : ''}. Source: ${card.source}.`,
+      }))
+    : [
+        { title: 'Company resolved', text: `${companyName} was resolved through ABR${abn !== 'N/A' ? ` with ABN ${abn}` : ''}.` },
+        { title: 'News search', text: `${profile.newsCandidateCount} news candidate${profile.newsCandidateCount === 1 ? '' : 's'} returned across generated queries.` },
+        { title: 'Report scan', text: profile.reportCount ? `${profile.reportCount} uploaded report${profile.reportCount === 1 ? '' : 's'} checked.` : 'No report was uploaded for document evidence.' },
+      ];
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [pageState, setPageState] = useState<'ready' | 'loading' | 'empty' | 'error'>('ready');
@@ -205,8 +228,8 @@ export function CompanyOverview() {
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="text-[20px] text-stone-900 leading-tight">{companyName}</div>
                 <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
-                <Chip tone="blue">{analysis?.resolution?.normalized_name || 'ASX: BHP'}</Chip>
-                <Chip tone="stone">Public</Chip>
+                <Chip tone="blue">{analysis?.resolution?.normalized_name || profile.sector}</Chip>
+                <Chip tone="stone">{analysis ? 'Live analysis' : 'Demo data'}</Chip>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                   <Radio size={10} /> High coverage
                 </span>
@@ -218,7 +241,7 @@ export function CompanyOverview() {
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
                 <span className="inline-flex items-center gap-1"><MapPin size={11} /> {profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}</span>
                 <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> {evidenceCards.length ? `${evidenceCards.length} live evidence records` : 'Updated 2h ago'}</span>
+                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> {analysis ? `${evidenceCards.length} live evidence records` : 'Run a company search to populate live data'}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -247,7 +270,7 @@ export function CompanyOverview() {
           <Card className="p-5">
             <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500 mb-3">Exposure tags</div>
             <div className="flex flex-wrap gap-1.5">
-              {exposureTags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}
+              {dynamicExposureTags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}
             </div>
           </Card>
         </div>
@@ -285,7 +308,7 @@ export function CompanyOverview() {
                 <SlideCard title="Risk intelligence" badge={<Chip tone="emerald">Nature Risk</Chip>}>
               <div className="flex items-center gap-6 flex-wrap pt-4">
                 <div className="relative">
-                  <RadialGauge value={SCORE} />
+                  <RadialGauge value={score} />
                   {/* orbiting chips */}
                   {orbitChips.map((c) => {
                     const Icon = c.icon;
@@ -303,13 +326,13 @@ export function CompanyOverview() {
 
                 <div className="flex-1 min-w-[280px] space-y-3">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <RiskBadge level="High" />
+                    <RiskBadge level={riskLevel} />
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-[11px] ring-1 ring-rose-200">
-                      <TrendingUp size={11} /> +{CHANGE_30D} in 30 days
+                      <TrendingUp size={11} /> {change30d >= 0 ? '+' : ''}{change30d} in 30 days
                     </span>
                   </div>
                   <div className="text-[13px] text-stone-700 leading-relaxed">
-                    Elevated biodiversity risk based on location overlap, supplier exposure, and recent evidence ingested over the last quarter.
+                    Biodiversity risk is calculated from ABR resolution, generated news candidates, extracted evidence, and any reports uploaded during the search.
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -320,15 +343,15 @@ export function CompanyOverview() {
                     </div>
                     <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
                       <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><Users2 size={11} /> Peer percentile</div>
-                      <div className="text-[28px] leading-none tracking-tight text-stone-900 mt-1">{PEER_PERCENTILE}<span className="text-[14px] text-stone-400">th</span></div>
-                      <MetricExplain>Higher risk than {PEER_PERCENTILE}% of sector peers.</MetricExplain>
+                      <div className="text-[28px] leading-none tracking-tight text-stone-900 mt-1">{peerPercentile}<span className="text-[14px] text-stone-400">th</span></div>
+                      <MetricExplain>Estimated from the current score while sector peer data is pending.</MetricExplain>
                     </div>
                     <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
                       <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><ShieldCheck size={11} /> Confidence</div>
                       <div className="flex items-center gap-2 mt-1">
-                        <div className="text-[22px] leading-none text-stone-900">{CONFIDENCE}%</div>
+                        <div className="text-[22px] leading-none text-stone-900">{confidence}%</div>
                         <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500" style={{ width: `${CONFIDENCE}%` }} />
+                          <div className="h-full bg-emerald-500" style={{ width: `${confidence}%` }} />
                         </div>
                       </div>
                       <MetricExplain>Recent, traceable, multi-source evidence.</MetricExplain>
@@ -336,12 +359,12 @@ export function CompanyOverview() {
                     <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
                       <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><Database size={11} /> Data coverage</div>
                       <div className="flex items-center gap-2 mt-1">
-                        <div className="text-[22px] leading-none text-stone-900">{COVERAGE}%</div>
+                        <div className="text-[22px] leading-none text-stone-900">{coverage}%</div>
                         <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500" style={{ width: `${COVERAGE}%` }} />
+                          <div className="h-full bg-blue-500" style={{ width: `${coverage}%` }} />
                         </div>
                       </div>
-                      <MetricExplain>{SOURCES} sources resolved · supplier data partial.</MetricExplain>
+                      <MetricExplain>{sourceCount} source signal{sourceCount === 1 ? '' : 's'} resolved from this run.</MetricExplain>
                     </div>
                   </div>
                 </div>
@@ -352,14 +375,24 @@ export function CompanyOverview() {
               {/* SLIDE 1: Executive summary */}
               <div>
                 <SlideCard title="Executive summary" badge={<Chip tone="stone">For investors</Chip>}>
-              <ul className="space-y-2.5 text-[13px] text-stone-700 pt-3">
+              {analysis && (
+                <ul className="space-y-2.5 text-[13px] text-stone-700 pt-3">
+                  {summaryBullets.map((item, index) => (
+                    <li key={`${item.title}-${index}`} className="flex gap-2">
+                      <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${index === 0 ? 'bg-rose-500' : index === 1 ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                      <span><b className="text-stone-900">{item.title}:</b> {item.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!analysis && <ul className="space-y-2.5 text-[13px] text-stone-700 pt-3">
                 <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
                   <span><b className="text-stone-900">Main signal:</b> Iron-ore expansion in the Pilbara has materially increased spatial overlap with three protected ecosystems.</span></li>
                 <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
                   <span><b className="text-stone-900">Recent change:</b> Supplier-linked exposure rose +18 pts after a Tier-2 mill in Brazil was geolocated within 4 km of a KBA.</span></li>
                 <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
                   <span><b className="text-stone-900">Why it matters:</b> EU CSRD and TNFD alignment gaps may widen ESG-rating spreads and raise cost of capital by 8–14 bps.</span></li>
-              </ul>
+              </ul>}
               <div className="flex flex-wrap gap-1.5 mt-4">
                 {['Regulatory', 'Supply Chain', 'Spatial', 'Reputational', 'Disclosure Gap'].map(m =>
                   <Chip key={m} tone="amber">{m}</Chip>)}
@@ -369,12 +402,12 @@ export function CompanyOverview() {
 
               {/* SLIDE 2: Score composition */}
               <div>
-                <SlideCard title="Score composition" badge={<Chip tone="stone">82 pts total</Chip>}>
+                <SlideCard title="Score composition" badge={<Chip tone="stone">{score} pts total</Chip>}>
               <MetricExplain>Each segment shows how many points of the total risk score come from that driver.</MetricExplain>
               <div className="mt-4 flex h-3 rounded-full overflow-hidden border border-stone-100">
                 {composition.map(s => (
                   <div key={s.key} title={`${s.value} pts from ${s.label}`}
-                    style={{ width: `${(s.value / SCORE) * 100}%`, background: s.color }} />
+                    style={{ width: `${(s.value / Math.max(1, score)) * 100}%`, background: s.color }} />
                 ))}
               </div>
               <div className="grid grid-cols-2 gap-3 mt-4">
@@ -474,12 +507,12 @@ export function CompanyOverview() {
 
               {/* SLIDE 6: Evidence quality */}
               <div>
-                <SlideCard title="Evidence quality" badge={<Chip tone="stone">{SOURCES} sources</Chip>}>
-                  <MetricExplain>{SOURCES} sources contributing to this assessment.</MetricExplain>
+                <SlideCard title="Evidence quality" badge={<Chip tone="stone">{sourceCount} sources</Chip>}>
+                  <MetricExplain>{sourceCount} source signal{sourceCount === 1 ? '' : 's'} contributing to this assessment.</MetricExplain>
                   <div className="mt-4">
                     <div className="text-[10.5px] uppercase tracking-wider text-stone-500 mb-1.5">Source mix</div>
                     <div className="flex h-2.5 rounded-full overflow-hidden border border-stone-100">
-                      {sourceMix.map(s => <div key={s.type} className={s.color} style={{ width: `${(s.n / SOURCES) * 100}%` }} title={`${s.type}: ${s.n}`} />)}
+                      {sourceMix.map(s => <div key={s.type} className={s.color} style={{ width: `${(s.n / Math.max(1, sourceCount)) * 100}%` }} title={`${s.type}: ${s.n}`} />)}
                     </div>
                     <div className="mt-2 grid grid-cols-1 gap-1">
                       {sourceMix.map(s => (
