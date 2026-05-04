@@ -35,7 +35,7 @@ jobs:
       - name: Build frontend
         working-directory: fronend
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: https://seeco-f3czdehdbqapcshu.australiaeast-01.azurewebsites.net
         run: npm run build
 
       - name: Build deployment package
