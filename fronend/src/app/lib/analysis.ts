@@ -11,6 +11,60 @@ export type BackendEvidenceRecord = {
   llm_confidence?: number;
 };
 
+export type BackendSpatialSpecies = {
+  scientific_name: string;
+  common_name?: string | null;
+  taxon_rank?: string | null;
+  record_count: number;
+  iucn_category?: string | null;
+  iucn_category_name?: string | null;
+  threat_weight: number;
+  iucn_url?: string | null;
+};
+
+export type BackendSpatialAnalysis = {
+  status?: 'success' | 'loading' | 'failed';
+  generated_at?: string;
+  started_at?: string;
+  error?: string;
+  query_id?: string;
+  inferred_location?: {
+    label: string;
+    address_raw?: string | null;
+    state?: string | null;
+    postcode?: string | null;
+    country: string;
+    lat: number;
+    lon: number;
+    radius_km: number;
+    confidence: string;
+    method: string;
+    source: string;
+    location_id?: string | null;
+  };
+  location?: {
+    label?: string;
+    lat: number;
+    lon: number;
+    radius_km: number;
+    confidence?: string;
+    method?: string;
+    source?: string;
+    state?: string | null;
+    postcode?: string | null;
+    country?: string;
+  };
+  data_sources?: string[];
+  total_ala_records?: number;
+  unique_species_count?: number;
+  iucn_assessed_species?: number;
+  threatened_species_count?: number;
+  species_threat_score?: number;
+  score_breakdown?: Record<string, number>;
+  threatened_species?: BackendSpatialSpecies[];
+  all_species?: BackendSpatialSpecies[];
+};
+
 export type BackendNewsCandidate = {
   title?: string;
   snippet?: string;
@@ -27,14 +81,19 @@ export type BackendCompanyAnalysis = {
   resolution?: {
     input_value?: string;
     alias_abn?: string | null;
+    input_type?: string;
     legal_name?: string;
     normalized_name?: string;
     abn?: string | null;
     state?: string | null;
     postcode?: string | null;
+    abn_status?: string | null;
     abr?: {
       success?: boolean;
       message?: string;
+      abn_status?: string;
+      entity_type?: string;
+      gst_registered?: boolean;
     };
   };
   search_queries?: string[];
@@ -50,14 +109,7 @@ export type BackendCompanyAnalysis = {
     evidence_count?: number;
     evidence?: BackendEvidenceRecord[];
   };
-  spatial_analysis?: {
-    status?: 'success' | 'loading' | 'failed';
-    query_id?: string;
-    unique_species_count?: number;
-    iucn_assessed_species?: number;
-    threatened_species_count?: number;
-    species_threat_score?: number;
-  };
+  spatial_analysis?: BackendSpatialAnalysis;
 };
 
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';

@@ -1,661 +1,879 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import Slider from 'react-slick';
 import {
-  Building2, CheckCircle2, Download, Star, TrendingUp, AlertTriangle, ChevronDown, ChevronLeft, ChevronRight,
-  X, Info, MapPin, FileText, ShieldCheck, Sparkles, Calendar, Globe2, Gavel, Newspaper,
-  ExternalLink, GitBranch, Map, Search, Eye, FileCheck2, Compass, Activity, AlertCircle,
-  RefreshCw, BarChart3, ScanSearch, Layers, Bell, FileBarChart2, Users2, Factory, Radio,
-  Database, ClipboardCheck, ArrowRight, Plus, Minus,
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  BarChart3,
+  Bell,
+  Building2,
+  CheckCircle2,
+  ClipboardCheck,
+  Compass,
+  Database,
+  Download,
+  ExternalLink,
+  FileBarChart2,
+  FileCheck2,
+  FileText,
+  Globe2,
+  Leaf,
+  Map as MapIcon,
+  MapPin,
+  Newspaper,
+  RefreshCw,
+  ScanSearch,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Star,
+  X,
+  type LucideIcon,
 } from 'lucide-react';
-import { Card, Chip, RiskBadge } from '../components/shared';
-import { analysisEvidenceCards, companyDisplayName, companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
-import { generateReport, reportHtmlUrl, sendPersistedReportEmail } from '../../lib/api';
+import { Card, Chip, RiskBadge, SectionTitle } from '../components/shared';
+import {
+  allEvidenceRecords,
+  analysisEvidenceCards,
+  companyDisplayName,
+  companyProfileFromAnalysis,
+  confidencePercent,
+  loadCompanyAnalysis,
+  type BackendCompanyAnalysis,
+  type BackendEvidenceRecord,
+  type BackendSpatialAnalysis,
+} from '../lib/analysis';
+import {
+  generateReport,
+  getSpatialAnalysisForQuery,
+  reportHtmlUrl,
+  sendPersistedReportEmail,
+} from '../../lib/api';
 
-type PageId = 'analyse' | 'knowledge';
+type Tone = 'stone' | 'emerald' | 'blue' | 'amber' | 'rose' | 'purple' | 'sky';
 
-const SCORE = 82;
-const CHANGE_30D = 7;
-const PEER_PERCENTILE = 88;
-const CONFIDENCE = 91;
-const COVERAGE = 74;
-const SOURCES = 18;
+const toneStyles: Record<Tone, { icon: string; soft: string; bar: string; text: string }> = {
+  stone: {
+    icon: 'bg-stone-100 text-stone-700',
+    soft: 'bg-stone-50 border-stone-200',
+    bar: 'bg-stone-500',
+    text: 'text-stone-700',
+  },
+  emerald: {
+    icon: 'bg-emerald-50 text-emerald-700',
+    soft: 'bg-emerald-50 border-emerald-200',
+    bar: 'bg-emerald-500',
+    text: 'text-emerald-700',
+  },
+  blue: {
+    icon: 'bg-blue-50 text-blue-700',
+    soft: 'bg-blue-50 border-blue-200',
+    bar: 'bg-blue-500',
+    text: 'text-blue-700',
+  },
+  amber: {
+    icon: 'bg-amber-50 text-amber-700',
+    soft: 'bg-amber-50 border-amber-200',
+    bar: 'bg-amber-500',
+    text: 'text-amber-700',
+  },
+  rose: {
+    icon: 'bg-rose-50 text-rose-700',
+    soft: 'bg-rose-50 border-rose-200',
+    bar: 'bg-rose-500',
+    text: 'text-rose-700',
+  },
+  purple: {
+    icon: 'bg-purple-50 text-purple-700',
+    soft: 'bg-purple-50 border-purple-200',
+    bar: 'bg-purple-500',
+    text: 'text-purple-700',
+  },
+  sky: {
+    icon: 'bg-sky-50 text-sky-700',
+    soft: 'bg-sky-50 border-sky-200',
+    bar: 'bg-sky-500',
+    text: 'text-sky-700',
+  },
+};
 
-const trend12mo = [62, 64, 63, 66, 68, 70, 71, 72, 75, 78, 80, 82];
+function clamp(value: number, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
 
-const composition = [
-  { key: 'ops', label: 'Direct operations risk', value: 22, color: '#0f766e', desc: 'On-site footprint near sensitive ecosystems' },
-  { key: 'supply', label: 'Supply chain risk', value: 18, color: '#0891b2', desc: 'Tier-1/2 supplier-linked exposure' },
-  { key: 'protected', label: 'Protected area proximity', value: 14, color: '#65a30d', desc: 'Distance to RAMSAR / KBA / IUCN sites' },
-  { key: 'species', label: 'Threatened species sensitivity', value: 12, color: '#ca8a04', desc: 'Overlap with IUCN red-listed habitats' },
-  { key: 'controversy', label: 'Controversy / news signal', value: 9, color: '#ea580c', desc: 'Adverse media & enforcement actions' },
-  { key: 'disclosure', label: 'Disclosure weakness', value: 7, color: '#9333ea', desc: 'Gaps vs TNFD/SBTN expected disclosures' },
-];
+function formatNumber(value: number | undefined | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'N/A';
+  return new Intl.NumberFormat('en-AU').format(value);
+}
 
-const peers = [
-  { name: 'Rio Tinto', score: 79, pct: 84, conf: 89 },
-  { name: 'Fortescue', score: 71, pct: 72, conf: 86 },
-  { name: 'BHP Group', score: 82, pct: 88, conf: 91, self: true },
-  { name: 'Vale SA', score: 85, pct: 92, conf: 83 },
-];
-const peerMedian = 80;
+function formatDate(value?: string | null) {
+  if (!value) return 'Latest analysis';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
-const sourceMix = [
-  { type: 'Government', n: 6, color: 'bg-emerald-500' },
-  { type: 'Filings', n: 4, color: 'bg-blue-500' },
-  { type: 'NGO', n: 3, color: 'bg-amber-500' },
-  { type: 'Media', n: 3, color: 'bg-rose-500' },
-  { type: 'Geospatial', n: 2, color: 'bg-purple-500' },
-];
+function spatialScore(spatial: BackendSpatialAnalysis | null | undefined) {
+  const score = spatial?.species_threat_score;
+  if (typeof score !== 'number' || !Number.isFinite(score)) return null;
+  return Math.round(clamp(score));
+}
 
-const timeline = [
-  { d: '24 Apr 2026', icon: Database, tone: 'emerald', t: 'New evidence ingested', sub: '3 EPA filings auto-resolved' },
-  { d: '21 Apr 2026', icon: TrendingUp, tone: 'rose', t: 'Score revised +7', sub: 'Supplier-linked spatial overlap detected' },
-  { d: '14 Apr 2026', icon: Factory, tone: 'amber', t: 'Supplier risk flag', sub: 'Tier-2 mill within 4km of KBA' },
-  { d: '08 Apr 2026', icon: MapPin, tone: 'orange', t: 'Protected-area overlap confirmed', sub: '5 km buffer · RAMSAR wetland' },
-  { d: '02 Apr 2026', icon: FileBarChart2, tone: 'stone', t: 'TNFD report exported', sub: 'Distributed to 2 analysts' },
-];
+function sourceLabel(value?: string | null) {
+  if (!value) return 'Evidence';
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase());
+}
 
-const findings = [
-  { icon: MapPin, tone: 'rose', metric: '47%', label: 'of mapped sites within 10km of biodiversity-sensitive areas', why: 'Spatial overlap drives most regulatory and reputational exposure.' },
-  { icon: Factory, tone: 'amber', metric: '+18 pts', label: 'of total score from supplier-linked exposure', why: 'Supply-chain risk is opaque to most disclosures — uplift in audit cost likely.' },
-  { icon: Newspaper, tone: 'orange', metric: '+34%', label: 'rise in regulatory & news mentions this quarter', why: 'Adverse signal momentum often precedes enforcement.' },
-  { icon: ClipboardCheck, tone: 'blue', metric: '62%', label: 'disclosure completeness vs sector median 78%', why: 'TNFD-readiness gap may impact ESG ratings & cost of capital.' },
-];
+function evidenceTitle(record: BackendEvidenceRecord) {
+  return record.biodiversity_signal || record.evidence_type || 'Biodiversity evidence';
+}
 
-const tnfd = [
-  { phase: 'Locate', icon: Compass, status: 'On track', tone: 'emerald', metric: '88% sites mapped', sub: '12 sensitive regions identified' },
-  { phase: 'Evaluate', icon: ScanSearch, status: 'In progress', tone: 'blue', metric: '6 dependencies', sub: '4 priority impacts logged' },
-  { phase: 'Assess', icon: AlertTriangle, status: 'Action needed', tone: 'amber', metric: '3 material risks', sub: 'Spatial · supplier · disclosure' },
-  { phase: 'Prepare', icon: ShieldCheck, status: 'Behind', tone: 'rose', metric: '54% readiness', sub: 'TNFD draft due Q3 2026' },
-];
+function evidenceLocation(record: BackendEvidenceRecord) {
+  return record.location || 'Location not stated';
+}
 
-const orbitChips = [
-  { label: 'Protected area overlap', icon: MapPin, angle: -75 },
-  { label: 'Supplier exposure', icon: Factory, angle: -25 },
-  { label: 'Regulatory signal', icon: Gavel, angle: 25 },
-  { label: 'Species sensitivity', icon: Activity, angle: 75 },
-];
+function categoryTone(category?: string | null): Tone {
+  const normalized = (category || '').toUpperCase();
+  if (normalized === 'CR') return 'rose';
+  if (normalized === 'EN') return 'amber';
+  if (normalized === 'VU') return 'blue';
+  return 'stone';
+}
 
-const exposureTags = ['Mining & Resources', 'High water dependency', 'Spatial-intensive', 'TNFD-applicable', 'Scope 3 supplier-linked'];
+function riskDriverTone(value: number): Tone {
+  if (value >= 75) return 'rose';
+  if (value >= 50) return 'amber';
+  if (value >= 25) return 'blue';
+  return 'emerald';
+}
 
-const navAnchors = [
-  { id: 0, label: 'Risk intelligence' },
-  { id: 1, label: 'Executive summary' },
-  { id: 2, label: 'Score composition' },
-  { id: 3, label: 'TNFD snapshot' },
-  { id: 4, label: 'Key findings' },
-  { id: 5, label: 'Peer comparison' },
-  { id: 6, label: 'Evidence quality' },
-  { id: 7, label: 'Provenance' },
-  { id: 8, label: 'What changed' },
-  { id: 9, label: 'Explain this score' },
-];
+function sourceMix(analysis: BackendCompanyAnalysis | null, records: BackendEvidenceRecord[]) {
+  const counts = new Map<string, number>();
+  const add = (label: string, amount = 1) => counts.set(label, (counts.get(label) || 0) + amount);
 
-function Sparkline({ data, color = '#dc2626' }: { data: number[]; color?: string }) {
-  const max = Math.max(...data), min = Math.min(...data);
-  const w = 140, h = 36, pad = 2;
-  const pts = data.map((v, i) => {
-    const x = pad + (i * (w - pad * 2)) / (data.length - 1);
-    const y = h - pad - ((v - min) / (max - min || 1)) * (h - pad * 2);
-    return `${x},${y}`;
-  }).join(' ');
+  records.forEach(record => add(sourceLabel(record.source_type)));
+  if (analysis?.news?.candidates?.length || analysis?.news?.candidate_count) {
+    add('News candidates', analysis.news.candidates?.length || analysis.news.candidate_count || 0);
+  }
+  if (analysis?.analysed_reports?.length) add('Uploaded reports', analysis.analysed_reports.length);
+  if (analysis?.spatial_analysis?.status === 'success') add('ALA spatial layer', 1);
+
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function mergeSpatialIntoAnalysis(
+  current: BackendCompanyAnalysis | null,
+  spatial: BackendSpatialAnalysis,
+): BackendCompanyAnalysis | null {
+  if (!current) return null;
+  if (current.query_id && spatial.query_id && current.query_id !== spatial.query_id) return current;
+  return { ...current, spatial_analysis: spatial };
+}
+
+function persistCompanyAnalysis(analysis: BackendCompanyAnalysis | null) {
+  if (!analysis || typeof window === 'undefined') return;
+  window.localStorage.setItem('company_analysis', JSON.stringify(analysis));
+}
+
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone = 'stone',
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  detail: string;
+  tone?: Tone;
+}) {
   return (
-    <svg width={w} height={h} className="overflow-visible">
-      <polyline fill="none" stroke={color} strokeWidth="1.5" points={pts} />
-      <polyline fill={color} fillOpacity="0.08" stroke="none" points={`${pad},${h - pad} ${pts} ${w - pad},${h - pad}`} />
-      <circle cx={w - pad} cy={h - pad - ((data[data.length - 1] - min) / (max - min || 1)) * (h - pad * 2)} r="2.5" fill={color} />
-    </svg>
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[12px] text-stone-500">{label}</div>
+          <div className="mt-1 text-[28px] leading-none text-stone-950 tabular-nums">{value}</div>
+        </div>
+        <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${toneStyles[tone].icon}`}>
+          <Icon size={19} />
+        </div>
+      </div>
+      <div className="mt-3 text-[12px] leading-relaxed text-stone-600">{detail}</div>
+    </Card>
   );
 }
 
-function RadialGauge({ value }: { value: number }) {
-  const r = 92, c = 2 * Math.PI * r;
-  const offset = c - (value / 100) * c;
-  let segOffset = 0;
+function SignalBar({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: number;
+  detail: string;
+  tone: Tone;
+}) {
   return (
-    <div className="relative w-[240px] h-[240px]">
-      <svg width="240" height="240" className="-rotate-90">
-        <circle cx="120" cy="120" r={r} stroke="#e7e5e4" strokeWidth="14" fill="none" />
-        <circle cx="120" cy="120" r={r} stroke="url(#scoreGrad)" strokeWidth="14" fill="none"
-          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset} />
-        {composition.map((s) => {
-          const len = (s.value / 100) * c;
-          const dash = `${len} ${c}`;
-          const off = -segOffset;
-          segOffset += len;
-          return <circle key={s.key} cx="120" cy="120" r={r - 18} stroke={s.color} strokeWidth="4"
-            fill="none" strokeDasharray={dash} strokeDashoffset={off} opacity="0.85" />;
-        })}
-        <defs>
-          <linearGradient id="scoreGrad" x1="0" x2="1" y1="0" y2="1">
-            <stop offset="0%" stopColor="#10b981" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="100%" stopColor="#e11d48" />
-          </linearGradient>
-        </defs>
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500">Risk score</div>
-        <div className="text-[64px] leading-none tracking-tight text-stone-900">{value}</div>
-        <div className="text-[11px] text-stone-500 mt-1">/ 100 · Elevated</div>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[13px] text-stone-900">{label}</div>
+        <div className={`text-[12px] tabular-nums ${toneStyles[tone].text}`}>{Math.round(value)}/100</div>
       </div>
+      <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+        <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${clamp(value)}%` }} />
+      </div>
+      <div className="text-[11.5px] leading-relaxed text-stone-500">{detail}</div>
     </div>
   );
 }
 
-function MetricExplain({ children }: { children: React.ReactNode }) {
-  return <div className="text-[10.5px] text-stone-500 leading-snug mt-1">{children}</div>;
-}
-
-function SliderArrow({ direction, onClick }: { direction: 'prev' | 'next'; onClick?: () => void }) {
+function EmptyState({ onSearch }: { onSearch: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className={`absolute top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white shadow-lg border border-stone-200 hover:bg-stone-50 flex items-center justify-center text-stone-700 hover:text-emerald-700 transition-colors ${
-        direction === 'prev' ? '-left-5' : '-right-5'
-      }`}
-    >
-      {direction === 'prev' ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-    </button>
-  );
-}
-
-function SlideCard({ title, badge, children }: {
-  title: string; badge?: React.ReactNode; children: React.ReactNode;
-}) {
-  return (
-    <Card className="!h-auto min-h-[600px] p-8 mx-2">
-      <div className="flex items-center gap-2 mb-6 pb-4 border-b border-stone-100">
-        <div className="text-[18px] text-stone-900">{title}</div>
-        {badge}
-      </div>
-      <div className="text-[14px]">{children}</div>
-    </Card>
+    <div className="min-h-screen bg-[#f5f3ee] p-6 flex items-center justify-center">
+      <Card className="max-w-lg p-8 text-center">
+        <div className="mx-auto h-14 w-14 rounded-lg bg-stone-100 text-stone-500 flex items-center justify-center">
+          <Search size={25} />
+        </div>
+        <div className="mt-4 text-[20px] text-stone-950">No company analysis selected</div>
+        <p className="mt-2 text-[13px] leading-relaxed text-stone-600">
+          Run an entity search or evidence analysis first. The investor overview will then combine ABR resolution,
+          extracted evidence, and Layer A spatial biodiversity scoring.
+        </p>
+        <button
+          onClick={onSearch}
+          className="mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-4 text-[13px] text-white hover:bg-stone-800"
+        >
+          <Search size={14} /> Start search
+        </button>
+      </Card>
+    </div>
   );
 }
 
 export function CompanyOverview() {
   const navigate = useNavigate();
-  const analysis = useMemo(() => loadCompanyAnalysis(), []);
-  const queryId = useMemo(() => {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem('query_id');
-  }, []);
-  const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
-  const companyName = companyDisplayName(analysis);
-  const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
-  const abn = profile.abn;
-  const score = profile.score;
-  const riskLevel = profile.riskLevel;
-  const confidence = profile.confidence;
-  const sourceCount = Math.max(1, profile.evidenceCount + profile.newsCandidateCount + profile.reportCount);
-  const coverage = Math.min(100, Math.max(35, 45 + profile.evidenceCount * 8 + profile.newsCandidateCount * 2 + profile.reportCount * 10));
-  const peerPercentile = Math.min(95, Math.max(20, Math.round(score * 0.9)));
-  const change30d = 0;
-  const dynamicExposureTags = [
-    profile.sector,
-    `${profile.newsCandidateCount} news candidate${profile.newsCandidateCount === 1 ? '' : 's'}`,
-    `${profile.evidenceCount} evidence record${profile.evidenceCount === 1 ? '' : 's'}`,
-    profile.reportCount ? `${profile.reportCount} uploaded report${profile.reportCount === 1 ? '' : 's'}` : 'No uploaded report evidence',
-  ];
-  const summaryBullets = evidenceCards.length
-    ? evidenceCards.slice(0, 3).map(card => ({
-        title: card.type,
-        text: `${card.title}${card.location ? ` in ${card.location}` : ''}. Source: ${card.source}.`,
-      }))
-    : [
-        { title: 'Company resolved', text: `${companyName} was resolved through ABR${abn !== 'N/A' ? ` with ABN ${abn}` : ''}.` },
-        { title: 'News search', text: `${profile.newsCandidateCount} news candidate${profile.newsCandidateCount === 1 ? '' : 's'} returned across generated queries.` },
-        { title: 'Report scan', text: profile.reportCount ? `${profile.reportCount} uploaded report${profile.reportCount === 1 ? '' : 's'} checked.` : 'No report was uploaded for document evidence.' },
-      ];
+  const [analysis, setAnalysis] = useState<BackendCompanyAnalysis | null>(() => loadCompanyAnalysis());
   const [showWatchlist, setShowWatchlist] = useState(false);
   const [showExport, setShowExport] = useState(false);
-  const [pageState, setPageState] = useState<'ready' | 'loading' | 'empty' | 'error'>('ready');
-  const [currentSlide, setCurrentSlide] = useState(0);
-  const sliderRef = useRef<Slider>(null);
+  const [spatialBusy, setSpatialBusy] = useState(false);
+  const [spatialError, setSpatialError] = useState<string | null>(null);
 
-  if (pageState === 'loading') return <LoadingState onCancel={() => setPageState('ready')} />;
-  if (pageState === 'empty') return <EmptyState onRetry={() => setPageState('ready')} />;
-  if (pageState === 'error') return <ErrorState onRetry={() => setPageState('ready')} />;
+  const queryId = useMemo(() => {
+    if (analysis?.query_id) return analysis.query_id;
+    if (typeof window === 'undefined') return null;
+    return window.localStorage.getItem('query_id');
+  }, [analysis?.query_id]);
+
+  useEffect(() => {
+    if (!queryId) return;
+
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+
+    const loadSpatial = async () => {
+      try {
+        const data = await getSpatialAnalysisForQuery(queryId);
+        if (cancelled) return;
+
+        window.localStorage.setItem('latest_spatial_analysis', JSON.stringify(data));
+        setAnalysis(current => {
+          const merged = mergeSpatialIntoAnalysis(current, data);
+          persistCompanyAnalysis(merged);
+          return merged;
+        });
+
+        if (data.status === 'loading' && attempts < 2) {
+          attempts += 1;
+          timer = window.setTimeout(loadSpatial, 5000);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSpatialError(error instanceof Error ? error.message : 'Spatial analysis is unavailable.');
+        }
+      }
+    };
+
+    void loadSpatial();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [queryId]);
+
+  const refreshSpatial = async () => {
+    if (!queryId) return;
+    setSpatialBusy(true);
+    setSpatialError(null);
+    try {
+      const data = await getSpatialAnalysisForQuery(queryId, true);
+      window.localStorage.setItem('latest_spatial_analysis', JSON.stringify(data));
+      setAnalysis(current => {
+        const merged = mergeSpatialIntoAnalysis(current, data);
+        persistCompanyAnalysis(merged);
+        return merged;
+      });
+    } catch (error) {
+      setSpatialError(error instanceof Error ? error.message : 'Spatial analysis is unavailable.');
+    } finally {
+      setSpatialBusy(false);
+    }
+  };
+
+  const evidenceRecords = useMemo(() => allEvidenceRecords(analysis), [analysis]);
+  const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
+  const companyName = companyDisplayName(analysis);
+  const spatial = analysis?.spatial_analysis;
+  const layerScore = spatialScore(spatial);
+  const score = profile.score;
+  const riskLevel = profile.riskLevel;
+  const threatCount = spatial?.threatened_species_count ?? 0;
+  const assessedSpecies = spatial?.iucn_assessed_species ?? 0;
+  const uniqueSpecies = spatial?.unique_species_count ?? 0;
+  const alaRecords = spatial?.total_ala_records ?? 0;
+  const sourceSummary = sourceMix(analysis, evidenceRecords);
+  const avgConfidence = evidenceRecords.length
+    ? Math.round(evidenceRecords.reduce((sum, record) => sum + confidencePercent(record), 0) / evidenceRecords.length)
+    : profile.confidence;
+  const newsCandidates = analysis?.news?.candidates?.length || analysis?.news?.candidate_count || 0;
+  const reportEvidence = analysis?.reports?.evidence_count || analysis?.reports?.evidence?.length || 0;
+  const riskEvidence = evidenceRecords.filter(record => (record.evidence_type || '').toLowerCase().includes('risk')).length;
+  const actionEvidence = evidenceRecords.filter(record => {
+    const type = (record.evidence_type || '').toLowerCase();
+    const signal = (record.biodiversity_signal || '').toLowerCase();
+    return /action|mitigation|restoration|rehabilitation|offset/.test(`${type} ${signal}`);
+  }).length;
+  const entityResolved = Boolean(analysis?.resolution?.abr?.success || analysis?.resolution?.abn);
+
+  const drivers = [
+    {
+      label: 'Spatial biodiversity exposure',
+      value: layerScore ?? (spatial?.status === 'loading' ? 25 : 0),
+      detail: spatial?.status === 'success'
+        ? `${threatCount} threatened species across ${assessedSpecies || uniqueSpecies} assessed species at the inferred site.`
+        : spatial?.status === 'loading'
+          ? 'Layer A is still resolving ALA and IUCN data for this entity.'
+          : 'No completed Layer A result is attached to this company yet.',
+    },
+    {
+      label: 'Extracted evidence pressure',
+      value: clamp(riskEvidence * 24 + evidenceRecords.length * 8 - actionEvidence * 8),
+      detail: `${riskEvidence} risk record${riskEvidence === 1 ? '' : 's'} and ${actionEvidence} mitigation record${actionEvidence === 1 ? '' : 's'} found in news or uploaded reports.`,
+    },
+    {
+      label: 'Market and regulatory attention',
+      value: clamp(newsCandidates * 12 + evidenceRecords.filter(record => record.source_type === 'news').length * 10),
+      detail: `${newsCandidates} candidate article${newsCandidates === 1 ? '' : 's'} were screened for biodiversity relevance.`,
+    },
+    {
+      label: 'Disclosure coverage gap',
+      value: clamp((analysis?.analysed_reports?.length ? 45 : 70) - reportEvidence * 6 + (evidenceRecords.length ? 10 : 0)),
+      detail: analysis?.analysed_reports?.length
+        ? `${analysis.analysed_reports.length} uploaded report${analysis.analysed_reports.length === 1 ? '' : 's'} checked with ${reportEvidence} extracted signal${reportEvidence === 1 ? '' : 's'}.`
+        : 'No uploaded company report is attached, so disclosure confidence is limited.',
+    },
+  ];
+
+  const investorSummary = [
+    entityResolved
+      ? `${companyName} is resolved to ${analysis?.resolution?.abn ? `ABN ${analysis.resolution.abn}` : 'an ABR entity'}, giving investors a clean legal-entity anchor for evidence attribution.`
+      : `${companyName} has not been fully resolved to an ABR entity, so entity attribution should be reviewed before investment use.`,
+    spatial?.status === 'success'
+      ? `Layer A spatial analysis returned ${formatNumber(alaRecords)} ALA occurrence records, ${formatNumber(uniqueSpecies)} unique species, and a ${layerScore}/100 species threat score.`
+      : spatial?.status === 'loading'
+        ? 'Spatial analysis has started and will enrich the overview when the ALA and IUCN result is ready.'
+        : 'Spatial exposure is not yet available, which leaves a material gap in nature-risk assessment.',
+    evidenceRecords.length
+      ? `${evidenceRecords.length} extracted evidence record${evidenceRecords.length === 1 ? '' : 's'} support the current view, with average extraction confidence of ${avgConfidence}%.`
+      : 'No extracted evidence records are available yet; investors should request filings, site disclosures, and recent controversy checks.',
+  ];
+
+  const dueDiligenceQuestions = [
+    threatCount > 0
+      ? `Which operating assets or suppliers overlap the ${threatCount} threatened species signal?`
+      : 'Can management provide site-level biodiversity exposure and species-screening evidence?',
+    reportEvidence > 0
+      ? 'Do the extracted report claims align with external news and spatial signals?'
+      : 'Can the company provide its latest sustainability, TNFD, or rehabilitation reporting?',
+    newsCandidates > 0
+      ? 'Which candidate news items require analyst confirmation before committee use?'
+      : 'Should a broader regulatory and adverse-media search be run before investment memo sign-off?',
+  ];
+
+  const tnfdStages = [
+    {
+      phase: 'Locate',
+      icon: Compass,
+      tone: spatial?.status === 'success' ? 'emerald' : spatial?.status === 'loading' ? 'blue' : 'amber',
+      status: spatial?.status === 'success' ? 'Mapped' : spatial?.status === 'loading' ? 'Running' : 'Gap',
+      metric: spatial?.inferred_location?.label || spatial?.location?.label || 'Site pending',
+      detail: spatial?.status === 'success'
+        ? `${spatial.location?.radius_km || spatial.inferred_location?.radius_km || 10} km radius used for Layer A.`
+        : 'Needs a resolved operating location or inferred entity site.',
+    },
+    {
+      phase: 'Evaluate',
+      icon: ScanSearch,
+      tone: evidenceRecords.length ? 'emerald' : 'amber',
+      status: evidenceRecords.length ? 'Evidence found' : 'Sparse',
+      metric: `${evidenceRecords.length} evidence records`,
+      detail: 'News and uploaded reports are converted into traceable biodiversity signals.',
+    },
+    {
+      phase: 'Assess',
+      icon: AlertTriangle,
+      tone: score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald',
+      status: `${riskLevel} risk`,
+      metric: `${score}/100 score`,
+      detail: 'Risk reflects spatial threat first, then evidence pressure and disclosure coverage.',
+    },
+    {
+      phase: 'Prepare',
+      icon: FileBarChart2,
+      tone: analysis?.analysed_reports?.length ? 'blue' : 'amber',
+      status: analysis?.analysed_reports?.length ? 'Report-backed' : 'Needs disclosure',
+      metric: `${analysis?.analysed_reports?.length || 0} reports checked`,
+      detail: 'Export the current evidence pack for investor committee review.',
+    },
+  ] as const;
+
+  if (!analysis) {
+    return <EmptyState onSearch={() => navigate('/app/search')} />;
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4]">
-      <div className="max-w-[1400px] mx-auto px-6 py-6">
+    <div className="min-h-screen bg-[#f5f3ee]">
+      <div className="max-w-[1380px] mx-auto px-6 py-6 space-y-6">
+        <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex gap-4">
+              <div className="h-14 w-14 rounded-lg bg-stone-950 text-white flex items-center justify-center shrink-0">
+                <Building2 size={26} />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-[28px] leading-tight text-stone-950">{companyName}</div>
+                  <RiskBadge level={riskLevel} />
+                  <Chip tone={entityResolved ? 'emerald' : 'amber'}>
+                    <CheckCircle2 size={11} /> {entityResolved ? 'Entity resolved' : 'Needs entity review'}
+                  </Chip>
+                  <Chip tone={spatial?.status === 'success' ? 'blue' : 'stone'}>
+                    <MapPin size={11} /> Spatial {spatial?.status || 'pending'}
+                  </Chip>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-stone-600">
+                  <span>ABN {profile.abn}</span>
+                  <span>{profile.sector}</span>
+                  <span>{profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}</span>
+                  <span>{analysis.search_queries?.length || 0} generated search queries</span>
+                </div>
+              </div>
+            </div>
 
-        {/* === COMPANY HEADER === */}
-        <Card className="p-5 mb-5 bg-white">
-          <div className="flex items-start gap-4 flex-wrap">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-stone-900 to-stone-700 text-white flex items-center justify-center shrink-0">
-              <Building2 size={26} />
-            </div>
-            <div className="flex-1 min-w-[260px]">
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="text-[20px] text-stone-900 leading-tight">{companyName}</div>
-                <Chip tone="emerald"><CheckCircle2 size={11} /> ABR verified</Chip>
-                <Chip tone="blue">{analysis?.resolution?.normalized_name || profile.sector}</Chip>
-                <Chip tone="stone">{analysis ? 'Live analysis' : 'Demo data'}</Chip>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
-                  <Radio size={10} /> High coverage
-                </span>
-              </div>
-              <div className="text-[12.5px] text-stone-500 mt-1.5 flex items-center gap-3 flex-wrap">
-                <span>{abn ? `ABN ${abn}` : 'ABN pending'}</span>
-                <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><Factory size={11} /> {profile.sector}</span>
-                <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><MapPin size={11} /> {profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}</span>
-                <span className="w-1 h-1 rounded-full bg-stone-300" />
-                <span className="inline-flex items-center gap-1"><RefreshCw size={11} /> {analysis ? `${evidenceCards.length} live evidence records` : 'Run a company search to populate live data'}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => navigate('/app/knowledge')} className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[13px]"><GitBranch size={14} /> Knowledge</button>
-              <button onClick={() => navigate('/app/analyse')} className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[13px]"><Map size={14} /> Analyse</button>
-              <button onClick={() => setShowWatchlist(true)} className="inline-flex items-center gap-1.5 px-3 h-9 rounded-lg bg-stone-900 text-white hover:bg-stone-800 text-[13px]"><Star size={14} /> Watchlist</button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => navigate('/app/analyse')}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
+              >
+                <FileCheck2 size={14} /> Evidence
+              </button>
+              <button
+                onClick={() => navigate('/app/spatial')}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
+              >
+                <MapIcon size={14} /> Spatial
+              </button>
+              <button
+                onClick={() => void refreshSpatial()}
+                disabled={!queryId || spatialBusy}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw size={14} className={spatialBusy ? 'animate-spin' : ''} /> Refresh
+              </button>
+              <button
+                onClick={() => setShowExport(true)}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-stone-950 px-3 text-[13px] text-white hover:bg-stone-800"
+              >
+                <Download size={14} /> Export
+              </button>
             </div>
           </div>
-        </Card>
-
-        {/* === PROFILE & EXPOSURE ROW === */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-          <Card className="p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500 mb-3">Profile</div>
-            <div className="text-[13px] text-stone-700 leading-relaxed">
-              {companyName} is resolved through ABR and analysed against configured news sources plus any uploaded company reports.
+          {spatialError && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              Spatial refresh failed: {spatialError}
             </div>
-            <div className="grid grid-cols-2 gap-3 mt-4 text-[12px]">
-              <div><div className="text-stone-500">ABN status</div><div className="text-stone-900">{analysis?.resolution?.abn_status || 'Verified'}</div></div>
-              <div><div className="text-stone-500">State</div><div className="text-stone-900">{profile.state}</div></div>
-              <div><div className="text-stone-500">Evidence records</div><div className="text-stone-900">{profile.evidenceCount}</div></div>
-              <div><div className="text-stone-500">News candidates</div><div className="text-stone-900">{profile.newsCandidateCount}</div></div>
+          )}
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            icon={BarChart3}
+            label="Biodiversity risk score"
+            value={`${score}/100`}
+            detail={layerScore !== null ? 'Driven by Layer A spatial species threat scoring.' : 'Estimated from evidence pressure until spatial scoring completes.'}
+            tone={score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald'}
+          />
+          <MetricCard
+            icon={Building2}
+            label="Entity confidence"
+            value={`${profile.confidence}%`}
+            detail={entityResolved ? 'ABR identity gives evidence a legal entity anchor.' : 'Entity resolution needs analyst review before reliance.'}
+            tone={entityResolved ? 'emerald' : 'amber'}
+          />
+          <MetricCard
+            icon={Leaf}
+            label="Threatened species"
+            value={spatial?.status === 'success' ? String(threatCount) : 'Pending'}
+            detail={spatial?.status === 'success' ? `${assessedSpecies || uniqueSpecies} IUCN-assessed species in the spatial screen.` : 'Awaiting Layer A spatial enrichment.'}
+            tone={threatCount >= 10 ? 'rose' : threatCount >= 3 ? 'amber' : 'blue'}
+          />
+          <MetricCard
+            icon={Database}
+            label="Evidence base"
+            value={`${evidenceRecords.length}`}
+            detail={`${newsCandidates} news candidates, ${reportEvidence} report-derived signals, ${sourceSummary.length} source groups.`}
+            tone={evidenceRecords.length ? 'blue' : 'amber'}
+          />
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+          <Card className="p-6">
+            <SectionTitle title="Investor read" action={<Chip tone="stone">Entity + evidence + spatial</Chip>} />
+            <div className="grid gap-4 lg:grid-cols-[0.7fr_1fr]">
+              <div className="flex flex-col items-center justify-center rounded-xl border border-stone-200 bg-stone-50 p-5">
+                <div className="text-[12px] text-stone-500">Current nature-risk view</div>
+                <div className="mt-2 text-[72px] leading-none text-stone-950 tabular-nums">{score}</div>
+                <div className="mt-2"><RiskBadge level={riskLevel} /></div>
+                <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-stone-200">
+                  <div
+                    className={`h-full ${score >= 70 ? 'bg-rose-500' : score >= 45 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                    style={{ width: `${score}%` }}
+                  />
+                </div>
+                <div className="mt-3 text-center text-[11.5px] leading-relaxed text-stone-500">
+                  Score uses spatial risk where available and evidence pressure when spatial data is still pending.
+                </div>
+              </div>
+              <div className="space-y-3">
+                {investorSummary.map((item, index) => (
+                  <div key={item} className="flex gap-3 rounded-lg border border-stone-200 bg-white p-3">
+                    <div className={`mt-0.5 h-6 w-6 rounded-lg flex items-center justify-center ${index === 0 ? toneStyles.emerald.icon : index === 1 ? toneStyles.blue.icon : toneStyles.amber.icon}`}>
+                      {index === 0 ? <Building2 size={13} /> : index === 1 ? <MapPin size={13} /> : <FileText size={13} />}
+                    </div>
+                    <div className="text-[13px] leading-relaxed text-stone-700">{item}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </Card>
 
-          <Card className="p-5">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500 mb-3">Exposure tags</div>
-            <div className="flex flex-wrap gap-1.5">
-              {dynamicExposureTags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}
+          <Card className="p-6">
+            <SectionTitle title="Investor questions" action={<Sparkles size={16} className="text-amber-600" />} />
+            <div className="space-y-3">
+              {dueDiligenceQuestions.map((question, index) => (
+                <div key={question} className="flex gap-3">
+                  <div className="h-6 w-6 shrink-0 rounded-lg bg-stone-100 text-stone-700 flex items-center justify-center text-[12px]">
+                    {index + 1}
+                  </div>
+                  <div className="text-[13px] leading-relaxed text-stone-700">{question}</div>
+                </div>
+              ))}
             </div>
           </Card>
-        </div>
+        </section>
 
-        {/* === SLIDER ROW === */}
-        <div className="mb-5">
-            <div className="mb-3 px-2">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-stone-500">
-                  Section {currentSlide + 1} of {navAnchors.length}
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+          <Card className="p-6">
+            <SectionTitle title="Risk drivers" action={<Chip tone="amber">{drivers.length} signals</Chip>} />
+            <div className="space-y-5">
+              {drivers.map(driver => {
+                const tone = riskDriverTone(driver.value);
+                return (
+                  <SignalBar
+                    key={driver.label}
+                    label={driver.label}
+                    value={driver.value}
+                    detail={driver.detail}
+                    tone={tone}
+                  />
+                );
+              })}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <SectionTitle
+              title="Spatial exposure"
+              action={
+                <Chip tone={spatial?.status === 'success' ? 'emerald' : spatial?.status === 'loading' ? 'blue' : 'amber'}>
+                  {spatial?.status || 'pending'}
+                </Chip>
+              }
+            />
+            <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+              <div className="rounded-xl border border-stone-200 bg-[#edf7f1] p-4">
+                <div className="flex items-center gap-2 text-[13px] text-stone-900">
+                  <MapPin size={15} className="text-emerald-700" />
+                  {spatial?.inferred_location?.label || spatial?.location?.label || `${profile.state} inferred context`}
                 </div>
-                <div className="text-[12px] text-stone-600">{navAnchors[currentSlide]?.label}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] text-stone-500">ALA records</div>
+                    <div className="text-[22px] text-stone-950 tabular-nums">{formatNumber(alaRecords)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-stone-500">Unique species</div>
+                    <div className="text-[22px] text-stone-950 tabular-nums">{formatNumber(uniqueSpecies)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-stone-500">Threat score</div>
+                    <div className="text-[22px] text-stone-950 tabular-nums">{layerScore !== null ? `${layerScore}/100` : 'N/A'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-stone-500">Radius</div>
+                    <div className="text-[22px] text-stone-950 tabular-nums">
+                      {spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 text-[11.5px] leading-relaxed text-stone-600">
+                  Source: {spatial?.inferred_location?.source || spatial?.location?.source || 'ABR inferred location and ALA Biocache'}
+                </div>
               </div>
-              <div className="h-1 bg-stone-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-emerald-600 to-emerald-500 transition-all duration-500"
-                  style={{ width: `${((currentSlide + 1) / navAnchors.length) * 100}%` }}
-                />
+
+              <div>
+                <div className="text-[12px] text-stone-500">Threat mix</div>
+                <div className="mt-3 space-y-2">
+                  {Object.entries(spatial?.score_breakdown || {}).length ? (
+                    Object.entries(spatial?.score_breakdown || {}).map(([label, value]) => (
+                      <SignalBar
+                        key={label}
+                        label={sourceLabel(label)}
+                        value={clamp(Number(value))}
+                        detail="Weighted contribution from IUCN threat category counts."
+                        tone={riskDriverTone(Number(value))}
+                      />
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-stone-300 p-4 text-[13px] leading-relaxed text-stone-600">
+                      Score breakdown is not available yet. Refresh spatial analysis after the Layer A job completes.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-            <Slider
-              ref={sliderRef}
-              dots={false}
-              infinite={false}
-              speed={500}
-              slidesToShow={1}
-              slidesToScroll={1}
-              beforeChange={(_, next) => setCurrentSlide(next)}
-              arrows={true}
-              prevArrow={<SliderArrow direction="prev" />}
-              nextArrow={<SliderArrow direction="next" />}
-            >
-              {/* SLIDE 0: Risk intelligence */}
-              <div>
-                <SlideCard title="Risk intelligence" badge={<Chip tone="emerald">Nature Risk</Chip>}>
-              <div className="flex items-center gap-6 flex-wrap pt-4">
-                <div className="relative">
-                  <RadialGauge value={score} />
-                  {/* orbiting chips */}
-                  {orbitChips.map((c) => {
-                    const Icon = c.icon;
-                    const rad = (c.angle * Math.PI) / 180;
-                    const x = 120 + 145 * Math.cos(rad);
-                    const y = 120 + 145 * Math.sin(rad);
-                    return (
-                      <div key={c.label} className="absolute hidden xl:flex items-center gap-1 px-2 py-1 rounded-full bg-white shadow-sm border border-stone-200 text-[10.5px] text-stone-700 whitespace-nowrap"
-                        style={{ left: x, top: y, transform: 'translate(-50%, -50%)' }}>
-                        <Icon size={10} className="text-emerald-700" /> {c.label}
-                      </div>
-                    );
-                  })}
-                </div>
+          </Card>
+        </section>
 
-                <div className="flex-1 min-w-[280px] space-y-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <RiskBadge level={riskLevel} />
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-[11px] ring-1 ring-rose-200">
-                      <TrendingUp size={11} /> {change30d >= 0 ? '+' : ''}{change30d} in 30 days
-                    </span>
-                  </div>
-                  <div className="text-[13px] text-stone-700 leading-relaxed">
-                    Biodiversity risk is calculated from ABR resolution, generated news candidates, extracted evidence, and any reports uploaded during the search.
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
-                      <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><BarChart3 size={11} /> 12-mo trend</div>
-                      <Sparkline data={trend12mo} />
-                      <MetricExplain>Deteriorating — score rose from 62 → 82 over 12 months.</MetricExplain>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
-                      <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><Users2 size={11} /> Peer percentile</div>
-                      <div className="text-[28px] leading-none tracking-tight text-stone-900 mt-1">{peerPercentile}<span className="text-[14px] text-stone-400">th</span></div>
-                      <MetricExplain>Estimated from the current score while sector peer data is pending.</MetricExplain>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
-                      <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><ShieldCheck size={11} /> Confidence</div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="text-[22px] leading-none text-stone-900">{confidence}%</div>
-                        <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500" style={{ width: `${confidence}%` }} />
-                        </div>
-                      </div>
-                      <MetricExplain>Recent, traceable, multi-source evidence.</MetricExplain>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/70 border border-stone-100">
-                      <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-stone-500"><Database size={11} /> Data coverage</div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="text-[22px] leading-none text-stone-900">{coverage}%</div>
-                        <div className="flex-1 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500" style={{ width: `${coverage}%` }} />
-                        </div>
-                      </div>
-                      <MetricExplain>{sourceCount} source signal{sourceCount === 1 ? '' : 's'} resolved from this run.</MetricExplain>
-                    </div>
-                  </div>
-                </div>
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 1: Executive summary */}
-              <div>
-                <SlideCard title="Executive summary" badge={<Chip tone="stone">For investors</Chip>}>
-              {analysis && (
-                <ul className="space-y-2.5 text-[13px] text-stone-700 pt-3">
-                  {summaryBullets.map((item, index) => (
-                    <li key={`${item.title}-${index}`} className="flex gap-2">
-                      <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${index === 0 ? 'bg-rose-500' : index === 1 ? 'bg-amber-500' : 'bg-blue-500'}`} />
-                      <span><b className="text-stone-900">{item.title}:</b> {item.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {!analysis && <ul className="space-y-2.5 text-[13px] text-stone-700 pt-3">
-                <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
-                  <span><b className="text-stone-900">Main signal:</b> Iron-ore expansion in the Pilbara has materially increased spatial overlap with three protected ecosystems.</span></li>
-                <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                  <span><b className="text-stone-900">Recent change:</b> Supplier-linked exposure rose +18 pts after a Tier-2 mill in Brazil was geolocated within 4 km of a KBA.</span></li>
-                <li className="flex gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
-                  <span><b className="text-stone-900">Why it matters:</b> EU CSRD and TNFD alignment gaps may widen ESG-rating spreads and raise cost of capital by 8–14 bps.</span></li>
-              </ul>}
-              <div className="flex flex-wrap gap-1.5 mt-4">
-                {['Regulatory', 'Supply Chain', 'Spatial', 'Reputational', 'Disclosure Gap'].map(m =>
-                  <Chip key={m} tone="amber">{m}</Chip>)}
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 2: Score composition */}
-              <div>
-                <SlideCard title="Score composition" badge={<Chip tone="stone">{score} pts total</Chip>}>
-              <MetricExplain>Each segment shows how many points of the total risk score come from that driver.</MetricExplain>
-              <div className="mt-4 flex h-3 rounded-full overflow-hidden border border-stone-100">
-                {composition.map(s => (
-                  <div key={s.key} title={`${s.value} pts from ${s.label}`}
-                    style={{ width: `${(s.value / Math.max(1, score)) * 100}%`, background: s.color }} />
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-3 mt-4">
-                {composition.map(s => (
-                  <div key={s.key} className="flex items-start gap-2 p-3 rounded-lg bg-stone-50">
-                    <span className="w-2.5 h-2.5 rounded-sm mt-1 shrink-0" style={{ background: s.color }} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-[12.5px] text-stone-900 truncate">{s.label}</div>
-                        <div className="text-[12.5px] text-stone-700 tabular-nums">{s.value} pts</div>
-                      </div>
-                      <div className="text-[11px] text-stone-500 leading-snug">{s.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 3: TNFD snapshot */}
-              <div>
-                <SlideCard title="TNFD snapshot" badge={<Chip tone="emerald">LEAP framework</Chip>}>
-              <div className="grid grid-cols-2 gap-3 pt-3">
-                {tnfd.map(p => {
-                  const Icon = p.icon;
-                  const tones: Record<string, string> = {
-                    emerald: 'from-emerald-50 to-white border-emerald-100 text-emerald-700',
-                    blue: 'from-blue-50 to-white border-blue-100 text-blue-700',
-                    amber: 'from-amber-50 to-white border-amber-100 text-amber-700',
-                    rose: 'from-rose-50 to-white border-rose-100 text-rose-700',
-                  };
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <Card className="p-6">
+            <SectionTitle title="Evidence dossier" action={<Chip tone="blue">{evidenceCards.length} records</Chip>} />
+            {evidenceCards.length ? (
+              <div className="space-y-3">
+                {evidenceRecords.slice(0, 5).map((record, index) => {
+                  const conf = confidencePercent(record);
+                  const tone = conf >= 80 ? 'emerald' : conf >= 60 ? 'blue' : 'amber';
                   return (
-                    <div key={p.phase} className={`p-4 rounded-xl bg-gradient-to-br ${tones[p.tone]} border`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Icon size={15} />
-                          <div className="text-[13px] text-stone-900">{p.phase}</div>
-                        </div>
-                        <div className="text-[10.5px] uppercase tracking-wider">{p.status}</div>
-                      </div>
-                      <div className="text-[20px] leading-none tracking-tight text-stone-900 mt-3">{p.metric}</div>
-                      <div className="text-[11.5px] text-stone-600 mt-1">{p.sub}</div>
-                    </div>
-                  );
-                })}
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 4: Key findings */}
-              <div>
-                <SlideCard title="Key findings" badge={<Chip tone="stone">4 insights</Chip>}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
-                {findings.map((f, i) => {
-                  const Icon = f.icon;
-                  const tones: Record<string, string> = {
-                    rose: 'bg-rose-50 text-rose-700', amber: 'bg-amber-50 text-amber-700',
-                    orange: 'bg-orange-50 text-orange-700', blue: 'bg-blue-50 text-blue-700',
-                  };
-                  return (
-                    <div key={i} className="p-4 rounded-xl border border-stone-100 bg-white">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${tones[f.tone]}`}><Icon size={14} /></div>
-                        <div className="text-[22px] leading-none tracking-tight text-stone-900">{f.metric}</div>
-                      </div>
-                      <div className="text-[12.5px] text-stone-700 mt-2 leading-snug">{f.label}</div>
-                      <div className="text-[11px] text-stone-500 mt-2 leading-snug italic">Why investors care: {f.why}</div>
-                    </div>
-                  );
-                })}
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 5: Peer comparison */}
-              <div>
-                <SlideCard title="Peer comparison" badge={<Chip tone="stone">Sector-matched</Chip>}>
-              <MetricExplain>Peers selected by GICS sector overlap and market-cap band. Median = {peerMedian}.</MetricExplain>
-              <div className="space-y-2.5 mt-4">
-                {peers.map(p => (
-                  <div key={p.name} className={`flex items-center gap-3 p-3 rounded-lg ${p.self ? 'bg-emerald-50 border border-emerald-200' : 'bg-stone-50'}`}>
-                    <div className={`text-[12.5px] w-32 ${p.self ? 'text-emerald-800 font-medium' : 'text-stone-700'}`}>
-                      {p.name} {p.self && <span className="text-[10px]">(this)</span>}
-                    </div>
-                    <div className="flex-1 relative h-2 bg-white rounded-full overflow-hidden">
-                      <div className="absolute top-0 bottom-0 w-px bg-stone-400" style={{ left: `${peerMedian}%` }} />
-                      <div className={`h-full rounded-full ${p.self ? 'bg-emerald-600' : 'bg-stone-400'}`} style={{ width: `${p.score}%` }} />
-                    </div>
-                    <div className="text-[12px] tabular-nums text-stone-700 w-12 text-right">{p.score}</div>
-                    <div className="text-[10.5px] tabular-nums text-stone-500 w-14 text-right">{p.pct}th pct</div>
-                    <div className="text-[10.5px] tabular-nums text-stone-500 w-14 text-right">{p.conf}% conf</div>
-                  </div>
-                ))}
-              </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 6: Evidence quality */}
-              <div>
-                <SlideCard title="Evidence quality" badge={<Chip tone="stone">{sourceCount} sources</Chip>}>
-                  <MetricExplain>{sourceCount} source signal{sourceCount === 1 ? '' : 's'} contributing to this assessment.</MetricExplain>
-                  <div className="mt-4">
-                    <div className="text-[10.5px] uppercase tracking-wider text-stone-500 mb-1.5">Source mix</div>
-                    <div className="flex h-2.5 rounded-full overflow-hidden border border-stone-100">
-                      {sourceMix.map(s => <div key={s.type} className={s.color} style={{ width: `${(s.n / Math.max(1, sourceCount)) * 100}%` }} title={`${s.type}: ${s.n}`} />)}
-                    </div>
-                    <div className="mt-2 grid grid-cols-1 gap-1">
-                      {sourceMix.map(s => (
-                        <div key={s.type} className="flex items-center gap-2 text-[11.5px] text-stone-600">
-                          <span className={`w-2 h-2 rounded-sm ${s.color}`} />
-                          <span className="flex-1">{s.type}</span>
-                          <span className="tabular-nums">{s.n}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-stone-100">
-                    <div className="text-[10.5px] uppercase tracking-wider text-stone-500 mb-2">Recency</div>
-                    <div className="grid grid-cols-4 gap-1">
-                      {[3, 6, 5, 4].map((n, i) => (
-                        <div key={i} className="flex flex-col items-center">
-                          <div className="w-full bg-emerald-200 rounded-sm" style={{ height: `${n * 6}px` }} />
-                          <div className="text-[9.5px] text-stone-500 mt-1">{['<30d', '<90d', '<1y', '>1y'][i]}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-stone-100 flex items-center justify-between text-[12px]">
-                    <span className="text-stone-600">Verified</span>
-                    <span className="text-emerald-700">14 / 18 (78%)</span>
-                  </div>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 7: Provenance */}
-              <div>
-                <SlideCard title="Provenance" badge={<Chip tone="emerald">Auditable</Chip>}>
-                  <MetricExplain>Every claim is traceable to its underlying source document.</MetricExplain>
-                  <div className="space-y-3 mt-4 text-[12.5px]">
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Traceable claims</span><span className="text-stone-900 tabular-nums">{evidenceCards.length || 142}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">News evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.news?.evidence?.length ?? 0}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Report evidence</span><span className="text-emerald-700 tabular-nums">{analysis?.reports?.evidence_count ?? 0}</span></div>
-                    <div className="flex items-center justify-between"><span className="text-stone-600">Avg extraction conf.</span><span className="text-stone-900 tabular-nums">{evidenceCards.length ? `${Math.round(evidenceCards.reduce((sum, item) => sum + item.conf, 0) / evidenceCards.length)}%` : '94%'}</span></div>
-                  </div>
-                  <button onClick={() => navigate('/app/knowledge')} className="mt-4 w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-stone-200 hover:bg-stone-50 text-[12.5px] text-stone-800">
-                    <FileCheck2 size={13} /> Open full audit trail
-                  </button>
-                </SlideCard>
-              </div>
-
-              {/* SLIDE 8: What changed */}
-              <div>
-                <SlideCard title="What changed" badge={<Chip tone="stone">Last 30d</Chip>}>
-                  <div className="mt-4 relative">
-                    <div className="absolute left-[11px] top-2 bottom-2 w-px bg-stone-200" />
-                    <div className="space-y-3">
-                      {timeline.map((e, i) => {
-                        const Icon = e.icon;
-                        const tones: Record<string, string> = {
-                          emerald: 'bg-emerald-100 text-emerald-700', rose: 'bg-rose-100 text-rose-700',
-                          amber: 'bg-amber-100 text-amber-700', orange: 'bg-orange-100 text-orange-700',
-                          stone: 'bg-stone-100 text-stone-700',
-                        };
-                        return (
-                          <div key={i} className="flex gap-3 relative">
-                            <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${tones[e.tone]} ring-2 ring-white relative z-10`}>
-                              <Icon size={11} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[12.5px] text-stone-900 leading-tight">{e.t}</div>
-                              <div className="text-[11px] text-stone-500">{e.sub}</div>
-                              <div className="text-[10px] text-stone-400 mt-0.5 inline-flex items-center gap-1"><Calendar size={9} /> {e.d}</div>
-                            </div>
+                    <div key={`${evidenceTitle(record)}-${index}`} className="rounded-lg border border-stone-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Chip tone={record.source_type === 'news' ? 'sky' : 'purple'}>{sourceLabel(record.source_type)}</Chip>
+                            <Chip tone={tone}>{conf}% confidence</Chip>
+                            {record.source_date && <span className="text-[11.5px] text-stone-500">{formatDate(record.source_date)}</span>}
                           </div>
-                        );
-                      })}
+                          <div className="mt-2 text-[14px] text-stone-950">{evidenceTitle(record)}</div>
+                          <div className="mt-1 flex flex-wrap gap-3 text-[12px] text-stone-600">
+                            <span className="inline-flex items-center gap-1"><MapPin size={12} /> {evidenceLocation(record)}</span>
+                            <span className="inline-flex items-center gap-1"><Activity size={12} /> {record.activity_type || 'Activity not classified'}</span>
+                            <span className="inline-flex items-center gap-1"><FileText size={12} /> {record.source || 'Source not stated'}</span>
+                          </div>
+                        </div>
+                        {record.source_url && (
+                          <a
+                            href={record.source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-200 px-2.5 text-[12px] text-stone-700 hover:bg-stone-50"
+                          >
+                            <ExternalLink size={12} /> Source
+                          </a>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </SlideCard>
+                  );
+                })}
               </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-stone-300 p-5 text-[13px] leading-relaxed text-stone-600">
+                No extracted evidence records are attached yet. Upload reports or run the evidence analysis flow to populate investor-grade claims.
+              </div>
+            )}
+          </Card>
 
-              {/* SLIDE 9: Explain this score */}
-              <div>
-                <SlideCard title="Explain this score" badge={<Chip tone="emerald"><Sparkles size={10} /> Investor-friendly</Chip>}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wider text-rose-600 mb-2 flex items-center gap-1"><Plus size={11} /> What raised the score</div>
-                    <ul className="space-y-1.5 text-[12.5px] text-stone-700">
-                      <li>• New supplier-linked spatial evidence (+12)</li>
-                      <li>• EPBC referral filed Apr 2026 (+4)</li>
-                      <li>• Adverse media uptick (+3)</li>
-                    </ul>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wider text-emerald-700 mb-2 flex items-center gap-1"><Minus size={11} /> What lowered the score</div>
-                    <ul className="space-y-1.5 text-[12.5px] text-stone-700">
-                      <li>• Restoration milestone — 142 ha replanted (−2)</li>
-                      <li>• Improved disclosure on water (−1)</li>
-                    </ul>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wider text-amber-600 mb-2 flex items-center gap-1"><AlertCircle size={11} /> Where data is incomplete</div>
-                    <ul className="space-y-1.5 text-[12.5px] text-stone-700">
-                      <li>• Tier-3 supplier mapping (38% resolved)</li>
-                      <li>• Latin-American site geocoding</li>
-                    </ul>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wider text-stone-600 mb-2 flex items-center gap-1"><Layers size={11} /> Direct vs inferred</div>
-                    <div className="flex h-3 rounded-full overflow-hidden border border-stone-100">
-                      <div className="bg-emerald-500" style={{ width: '64%' }} />
-                      <div className="bg-stone-300" style={{ width: '36%' }} />
+          <Card className="p-6">
+            <SectionTitle title="Source coverage" action={<Chip tone="stone">{sourceSummary.length} groups</Chip>} />
+            <div className="space-y-3">
+              {sourceSummary.length ? sourceSummary.map((source, index) => {
+                const tones: Tone[] = ['emerald', 'blue', 'amber', 'rose', 'purple', 'sky'];
+                const tone = tones[index % tones.length];
+                const total = sourceSummary.reduce((sum, item) => sum + item.count, 0);
+                return (
+                  <div key={source.label}>
+                    <div className="flex items-center justify-between text-[12.5px]">
+                      <span className="text-stone-700">{source.label}</span>
+                      <span className="text-stone-500 tabular-nums">{source.count}</span>
                     </div>
-                    <div className="flex justify-between text-[11px] text-stone-500 mt-1.5">
-                      <span>64% direct evidence</span><span>36% inferred</span>
+                    <div className="mt-1.5 h-2 rounded-full bg-stone-100 overflow-hidden">
+                      <div className={`h-full ${toneStyles[tone].bar}`} style={{ width: `${(source.count / Math.max(1, total)) * 100}%` }} />
                     </div>
                   </div>
+                );
+              }) : (
+                <div className="rounded-lg border border-dashed border-stone-300 p-4 text-[13px] text-stone-600">
+                  Source mix will appear when evidence, reports, or spatial data are attached.
+                </div>
+              )}
+            </div>
+            <div className="mt-5 rounded-lg border border-stone-200 bg-stone-50 p-4">
+              <div className="flex items-center gap-2 text-[13px] text-stone-950">
+                <ShieldCheck size={15} className="text-emerald-700" /> Evidence reliability
               </div>
-                </SlideCard>
+              <div className="mt-2 text-[12px] leading-relaxed text-stone-600">
+                Average extraction confidence is {avgConfidence}%. Use the source links and report export before treating these signals as final investment committee evidence.
               </div>
-            </Slider>
-        </div>
+            </div>
+          </Card>
+        </section>
 
-        {/* === ANALYST ACTIONS ROW === */}
-        <Card className="p-5 bg-gradient-to-br from-stone-50 to-emerald-50/40">
-          <div className="text-[14px] text-stone-900 mb-1">Analyst actions</div>
-          <div className="text-[11px] text-amber-700 inline-flex items-center gap-1 mb-3"><Bell size={11} /> 2 alerts triggered in past 90 days</div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-            <button onClick={() => setShowWatchlist(true)} className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-[12px]"><Star size={12} /> Watchlist</button>
-            <button onClick={() => setShowExport(true)} className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-stone-900 text-white hover:bg-stone-800 text-[12px]"><Download size={12} /> Export PDF</button>
-            <button className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-[12px]"><Users2 size={12} /> Compare peers</button>
-            <button className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-white border border-stone-200 hover:bg-stone-50 text-[12px]"><FileText size={12} /> TNFD report</button>
-            <button onClick={() => navigate('/app/knowledge')} className="inline-flex items-center justify-center gap-1.5 h-9 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[12px]"><Eye size={12} /> View evidence</button>
-          </div>
-          <div className="mt-3 pt-3 border-t border-stone-200/60 flex flex-wrap gap-1">
-            <button onClick={() => setPageState('loading')} className="text-[10px] text-stone-400 hover:text-stone-700">· loading</button>
-            <button onClick={() => setPageState('empty')} className="text-[10px] text-stone-400 hover:text-stone-700">· empty</button>
-            <button onClick={() => setPageState('error')} className="text-[10px] text-stone-400 hover:text-stone-700">· error</button>
-          </div>
-        </Card>
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+          <Card className="p-6">
+            <SectionTitle title="Entity analysis" action={<Chip tone={entityResolved ? 'emerald' : 'amber'}>{analysis.resolution?.abn_status || 'ABR'}</Chip>} />
+            <div className="space-y-3 text-[13px]">
+              {[
+                ['Legal name', analysis.resolution?.legal_name || companyName],
+                ['Normalised name', analysis.resolution?.normalized_name || companyName],
+                ['ABN', analysis.resolution?.abn || 'Not available'],
+                ['ABN status', analysis.resolution?.abn_status || analysis.resolution?.abr?.abn_status || 'Not available'],
+                ['Input type', sourceLabel(analysis.resolution?.input_type)],
+                ['Database query', queryId || 'Not persisted'],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-start justify-between gap-4 border-b border-stone-100 pb-2 last:border-0">
+                  <span className="text-stone-500">{label}</span>
+                  <span className="text-right text-stone-950">{value}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <SectionTitle title="TNFD investor snapshot" action={<Chip tone="emerald">LEAP</Chip>} />
+            <div className="grid gap-3 md:grid-cols-2">
+              {tnfdStages.map(stage => {
+                const Icon = stage.icon;
+                return (
+                  <div key={stage.phase} className={`rounded-lg border p-4 ${toneStyles[stage.tone].soft}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${toneStyles[stage.tone].icon}`}>
+                          <Icon size={15} />
+                        </div>
+                        <div>
+                          <div className="text-[13px] text-stone-950">{stage.phase}</div>
+                          <div className={`text-[11px] ${toneStyles[stage.tone].text}`}>{stage.status}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-[16px] text-stone-950">{stage.metric}</div>
+                    <div className="mt-1 text-[11.5px] leading-relaxed text-stone-600">{stage.detail}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_0.8fr]">
+          <Card className="p-6">
+            <SectionTitle title="Threatened species watchlist" action={<Chip tone="rose">{spatial?.threatened_species?.length || 0} species</Chip>} />
+            {spatial?.threatened_species?.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[680px] text-left text-[12.5px]">
+                  <thead className="border-b border-stone-200 text-stone-500">
+                    <tr>
+                      <th className="py-2 pr-3 font-normal">Species</th>
+                      <th className="py-2 pr-3 font-normal">IUCN</th>
+                      <th className="py-2 pr-3 font-normal">Records</th>
+                      <th className="py-2 pr-3 font-normal">Investor relevance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {spatial.threatened_species.slice(0, 6).map(species => {
+                      const tone = categoryTone(species.iucn_category);
+                      return (
+                        <tr key={species.scientific_name} className="border-b border-stone-100 last:border-0">
+                          <td className="py-3 pr-3">
+                            <div className="text-stone-950">{species.common_name || species.scientific_name}</div>
+                            <div className="text-[11px] italic text-stone-500">{species.scientific_name}</div>
+                          </td>
+                          <td className="py-3 pr-3"><Chip tone={tone}>{species.iucn_category || 'N/A'}</Chip></td>
+                          <td className="py-3 pr-3 tabular-nums text-stone-700">{formatNumber(species.record_count)}</td>
+                          <td className="py-3 pr-3 text-stone-600">
+                            Site-level exposure should be tested against habitat sensitivity, offset obligations, and permit conditions.
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-stone-300 p-5 text-[13px] leading-relaxed text-stone-600">
+                No threatened species list is attached yet. This area will populate from Layer A once IUCN enrichment succeeds.
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-6">
+            <SectionTitle title="Analyst actions" action={<Bell size={16} className="text-amber-600" />} />
+            <div className="space-y-3">
+              {[
+                { icon: Star, label: 'Add to watchlist', detail: 'Track score, evidence, and spatial changes.', action: () => setShowWatchlist(true), tone: 'emerald' as Tone },
+                { icon: Download, label: 'Export investor report', detail: 'Generate a PDF-ready evidence dossier.', action: () => setShowExport(true), tone: 'stone' as Tone },
+                { icon: Newspaper, label: 'Review evidence', detail: 'Open the evidence analysis workspace.', action: () => navigate('/app/analyse'), tone: 'blue' as Tone },
+                { icon: Globe2, label: 'Inspect spatial layer', detail: 'Validate inferred site context and species mix.', action: () => navigate('/app/spatial'), tone: 'amber' as Tone },
+              ].map(item => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.label}
+                    onClick={item.action}
+                    className="w-full rounded-lg border border-stone-200 bg-white p-3 text-left hover:bg-stone-50"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${toneStyles[item.tone].icon}`}>
+                        <Icon size={16} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-[13px] text-stone-950">{item.label}</div>
+                        <div className="text-[11.5px] text-stone-500">{item.detail}</div>
+                      </div>
+                      <ArrowRight size={14} className="text-stone-400" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+        </section>
       </div>
 
-      {/* === MODALS === */}
       {showWatchlist && <WatchlistModal companyName={companyName} onClose={() => setShowWatchlist(false)} />}
       {showExport && <ExportModal companyName={companyName} queryId={queryId} analysis={analysis} onClose={() => setShowExport(false)} />}
     </div>
@@ -667,44 +885,77 @@ function WatchlistModal({ companyName, onClose }: { companyName: string; onClose
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-5 border-b border-stone-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-stone-900 text-[14px]">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-stone-100 p-5">
+          <div className="flex items-center gap-2 text-[14px] text-stone-950">
             <Star size={16} className="text-emerald-600" /> Add to watchlist
           </div>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"><X size={14} /></button>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"
+            aria-label="Close watchlist modal"
+          >
+            <X size={14} />
+          </button>
         </div>
-        <div className="p-5 space-y-4">
-          <p className="text-[13px] text-stone-600">Track <b className="text-stone-900">{companyName}</b> and receive alerts when its biodiversity risk score, evidence base, or coverage changes materially.</p>
+        <div className="space-y-4 p-5">
+          <p className="text-[13px] leading-relaxed text-stone-600">
+            Track <b className="text-stone-950">{companyName}</b> when biodiversity risk, evidence coverage, or spatial exposure changes.
+          </p>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Alert frequency</div>
+            <div className="mb-2 text-[11px] uppercase text-stone-500">Alert frequency</div>
             <div className="grid grid-cols-3 gap-2">
-              {['daily', 'weekly', 'on change'].map(f => (
-                <button key={f} onClick={() => setFreq(f)} className={`h-9 rounded-lg border text-[12.5px] capitalize ${freq === f ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-stone-200 text-stone-700 hover:bg-stone-50'}`}>{f}</button>
+              {['daily', 'weekly', 'on change'].map(option => (
+                <button
+                  key={option}
+                  onClick={() => setFreq(option)}
+                  className={`h-9 rounded-lg border text-[12.5px] capitalize ${
+                    freq === option
+                      ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                      : 'border-stone-200 text-stone-700 hover:bg-stone-50'
+                  }`}
+                >
+                  {option}
+                </button>
               ))}
             </div>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Email</div>
-            <input type="email" placeholder="analyst@firm.com" className="w-full px-3 h-9 rounded-lg border border-stone-200 text-[13px] focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" />
+            <div className="mb-2 text-[11px] uppercase text-stone-500">Email</div>
+            <input
+              type="email"
+              placeholder="analyst@firm.com"
+              className="h-9 w-full rounded-lg border border-stone-200 px-3 text-[13px] focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
           </div>
-          <button onClick={onClose} className="w-full h-10 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[13px]">Add to watchlist</button>
+          <button onClick={onClose} className="h-10 w-full rounded-lg bg-emerald-700 text-[13px] text-white hover:bg-emerald-800">
+            Add to watchlist
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function ExportModal({ companyName, queryId, analysis, onClose }: { companyName: string; queryId: string | null; analysis: unknown; onClose: () => void }) {
-  const [sections, setSections] = useState({ hero: true, summary: true, composition: true, tnfd: true, findings: true, peers: false, evidence: true, timeline: false });
+function ExportModal({
+  companyName,
+  queryId,
+  analysis,
+  onClose,
+}: {
+  companyName: string;
+  queryId: string | null;
+  analysis: BackendCompanyAnalysis | null;
+  onClose: () => void;
+}) {
   const [email, setEmail] = useState('');
   const [emailStatus, setEmailStatus] = useState<'idle' | 'generating' | 'sending' | 'sent' | 'error'>('idle');
   const [reportId, setReportId] = useState<string | null>(() => {
     if (typeof window === 'undefined' || !queryId) return null;
-    return window.localStorage.getItem(`report_id:${queryId}`) || window.localStorage.getItem('report_id');
+    return window.localStorage.getItem(`report_id:${queryId}`);
   });
   const [message, setMessage] = useState<string | null>(null);
-  const toggle = (k: keyof typeof sections) => setSections(s => ({ ...s, [k]: !s[k] }));
+
   const ensureReport = async () => {
     if (!queryId) {
       setEmailStatus('error');
@@ -714,16 +965,16 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
     if (reportId) return reportId;
 
     setEmailStatus('generating');
-    setMessage('Generating report...');
+    setMessage('Generating investor report...');
     const generated = await generateReport(queryId, analysis || undefined);
     const nextReportId = generated.report_id;
     setReportId(nextReportId);
-    window.localStorage.setItem('report_id', nextReportId);
     window.localStorage.setItem(`report_id:${queryId}`, nextReportId);
     setEmailStatus('idle');
     setMessage('Report generated and saved.');
     return nextReportId;
   };
+
   const openReport = async () => {
     try {
       const nextReportId = await ensureReport();
@@ -734,17 +985,19 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
       setMessage(error instanceof Error ? error.message : 'Could not generate report.');
     }
   };
+
   const saveAsPdf = async () => {
     try {
       const nextReportId = await ensureReport();
       if (!nextReportId) return;
       window.open(reportHtmlUrl(nextReportId, true), '_blank', 'noopener,noreferrer');
-      setMessage('Choose "Save as PDF" in the print dialog.');
+      setMessage('Choose Save as PDF in the print dialog.');
     } catch (error) {
       setEmailStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not prepare PDF export.');
     }
   };
+
   const emailReport = async () => {
     if (!email.trim()) {
       setEmailStatus('error');
@@ -764,114 +1017,70 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
       setMessage(error instanceof Error ? error.message : 'Could not send report email.');
     }
   };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-5 border-b border-stone-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-stone-900 text-[14px]"><Download size={16} className="text-emerald-600" /> Export PDF</div>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"><X size={14} /></button>
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-stone-100 p-5">
+          <div className="flex items-center gap-2 text-[14px] text-stone-950">
+            <Download size={16} className="text-emerald-600" /> Export investor dossier
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"
+            aria-label="Close export modal"
+          >
+            <X size={14} />
+          </button>
         </div>
-        <div className="p-5 space-y-4">
-          <p className="text-[13px] text-stone-600">Generate an investor-ready report for <b className="text-stone-900">{companyName}</b>. Open it in the browser to save or print as PDF.</p>
-          <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Include sections</div>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(sections).map(([k, v]) => (
-                <label key={k} className="flex items-center gap-2 text-[12.5px] text-stone-700 cursor-pointer p-2 rounded-md hover:bg-stone-50">
-                  <input type="checkbox" checked={v} onChange={() => toggle(k as keyof typeof sections)} className="accent-emerald-600" /> <span className="capitalize">{k}</span>
-                </label>
-              ))}
-            </div>
+        <div className="space-y-4 p-5">
+          <p className="text-[13px] leading-relaxed text-stone-600">
+            Generate a report for <b className="text-stone-950">{companyName}</b> using the current entity, evidence, and spatial analysis payload.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <Chip tone="emerald"><Building2 size={11} /> Entity</Chip>
+            <Chip tone="blue"><FileText size={11} /> Evidence</Chip>
+            <Chip tone="amber"><MapPin size={11} /> Spatial</Chip>
+            <Chip tone="stone"><ClipboardCheck size={11} /> TNFD snapshot</Chip>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Email report</div>
+            <div className="mb-2 text-[11px] uppercase text-stone-500">Email report</div>
             <div className="flex gap-2">
               <input
                 type="email"
                 value={email}
                 onChange={event => setEmail(event.target.value)}
                 placeholder="analyst@firm.com"
-                className="flex-1 px-3 h-10 rounded-lg border border-stone-200 text-[13px] focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                className="h-10 flex-1 rounded-lg border border-stone-200 px-3 text-[13px] focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
               <button
                 onClick={emailReport}
                 disabled={emailStatus === 'sending'}
-                className="h-10 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:bg-stone-300 text-white text-[13px]"
+                className="inline-flex h-10 items-center justify-center rounded-lg bg-emerald-700 px-3 text-[13px] text-white hover:bg-emerald-800 disabled:bg-stone-300"
               >
-                {emailStatus === 'sending' ? 'Sending' : 'Send'}
+                {emailStatus === 'sending' ? <RefreshCw size={14} className="animate-spin" /> : 'Send'}
               </button>
             </div>
             {message && (
-            <div className={`mt-2 text-[12px] ${emailStatus === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>
+              <div className={`mt-2 text-[12px] ${emailStatus === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>
                 {message}
               </div>
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="flex-1 h-10 rounded-lg border border-stone-200 text-[13px] text-stone-700 hover:bg-stone-50">Cancel</button>
-            <button onClick={openReport} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg border border-stone-200 disabled:bg-stone-100 text-stone-700 text-[13px] hover:bg-stone-50 inline-flex items-center justify-center gap-1.5">Open report</button>
-            <button onClick={saveAsPdf} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg bg-stone-900 disabled:bg-stone-400 text-white text-[13px] hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"><Download size={13} /> {emailStatus === 'generating' ? 'Generating' : 'Save as PDF'}</button>
+            <button onClick={onClose} className="h-10 flex-1 rounded-lg border border-stone-200 text-[13px] text-stone-700 hover:bg-stone-50">
+              Cancel
+            </button>
+            <button onClick={openReport} disabled={emailStatus === 'generating'} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg border border-stone-200 text-[13px] text-stone-700 hover:bg-stone-50 disabled:bg-stone-100">
+              <FileText size={13} /> Open
+            </button>
+            <button onClick={saveAsPdf} disabled={emailStatus === 'generating'} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-950 text-[13px] text-white hover:bg-stone-800 disabled:bg-stone-400">
+              <Download size={13} /> PDF
+            </button>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function LoadingState({ onCancel }: { onCancel: () => void }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] p-6">
-      <div className="max-w-[1400px] mx-auto space-y-5">
-        <div className="h-20 rounded-2xl bg-white border border-stone-200 animate-pulse" />
-        <div className="grid grid-cols-12 gap-5">
-          <div className="col-span-3 space-y-5">
-            {[1, 2, 3].map(i => <div key={i} className="h-32 rounded-2xl bg-white border border-stone-200 animate-pulse" />)}
-          </div>
-          <div className="col-span-6 space-y-5">
-            <div className="h-72 rounded-2xl bg-white border border-stone-200 animate-pulse flex items-center justify-center">
-              <div className="text-[13px] text-stone-500 inline-flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Resolving evidence sources…</div>
-            </div>
-            {[1, 2].map(i => <div key={i} className="h-44 rounded-2xl bg-white border border-stone-200 animate-pulse" />)}
-          </div>
-          <div className="col-span-3 space-y-5">
-            {[1, 2, 3].map(i => <div key={i} className="h-32 rounded-2xl bg-white border border-stone-200 animate-pulse" />)}
-          </div>
-        </div>
-        <button onClick={onCancel} className="text-[12px] text-stone-500 hover:text-stone-800">Cancel</button>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] p-6 flex items-center justify-center">
-      <Card className="p-10 max-w-lg text-center">
-        <div className="w-14 h-14 rounded-2xl bg-stone-100 text-stone-500 flex items-center justify-center mx-auto"><Search size={26} /></div>
-        <div className="text-[18px] text-stone-900 mt-4">No evidence found yet</div>
-        <p className="text-[13px] text-stone-600 mt-2 leading-relaxed">We couldn't locate biodiversity-relevant filings, geospatial overlays, or supplier records for this company. Try expanding the time window or adding a manual source.</p>
-        <div className="flex gap-2 justify-center mt-5">
-          <button onClick={onRetry} className="h-9 px-4 rounded-lg border border-stone-200 text-[13px] hover:bg-stone-50">Back</button>
-          <button className="h-9 px-4 rounded-lg bg-emerald-700 text-white text-[13px] hover:bg-emerald-800 inline-flex items-center gap-1.5"><Plus size={13} /> Add a source</button>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function ErrorState({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] p-6 flex items-center justify-center">
-      <Card className="p-10 max-w-lg text-center border-rose-200">
-        <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto"><AlertCircle size={26} /></div>
-        <div className="text-[18px] text-stone-900 mt-4">We couldn't resolve some data sources</div>
-        <p className="text-[13px] text-stone-600 mt-2 leading-relaxed">One or more upstream providers returned an error. Partial intelligence may be available — retry to attempt resolution again.</p>
-        <div className="flex gap-2 justify-center mt-5">
-          <button onClick={onRetry} className="h-9 px-4 rounded-lg border border-stone-200 text-[13px] hover:bg-stone-50">Continue with partial data</button>
-          <button onClick={onRetry} className="h-9 px-4 rounded-lg bg-stone-900 text-white text-[13px] hover:bg-stone-800 inline-flex items-center gap-1.5"><RefreshCw size={13} /> Retry</button>
-        </div>
-      </Card>
     </div>
   );
 }
