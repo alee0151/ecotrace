@@ -107,7 +107,7 @@ CREATE INDEX idx_product_barcode  ON product(barcode);
 -- ------------------------------------------------------------
 CREATE TABLE search_query (
     query_id            UUID                    PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id             UUID                    NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+    user_id             UUID                    REFERENCES "user"(user_id) ON DELETE CASCADE,
     input_type          input_type_enum         NOT NULL,
     input_value         VARCHAR(500)            NOT NULL,
     resolution_status   resolution_status_enum  NOT NULL DEFAULT 'pending',
@@ -175,3 +175,61 @@ CREATE TABLE risk_event (
 );
 CREATE INDEX idx_risk_event_node_id   ON risk_event(node_id);
 CREATE INDEX idx_risk_event_source_id ON risk_event(source_id);
+
+
+-- ------------------------------------------------------------
+-- 11. INFERRED_LOCATION
+-- Holds locations inferred from ABN records, news articles,
+-- or attached reports (e.g. sustainability/annual reports).
+-- ------------------------------------------------------------
+
+CREATE TYPE location_source_enum AS ENUM ('abn', 'news', 'report');
+CREATE TYPE location_confidence_enum AS ENUM ('high', 'medium', 'low');
+
+CREATE TABLE inferred_location (
+    location_id         UUID                        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Owning company (always required)
+    company_id          UUID                        NOT NULL REFERENCES company(company_id) ON DELETE CASCADE,
+
+    -- Source discriminator
+    source_type         location_source_enum        NOT NULL,
+
+    -- Optional FK to the originating source record
+    -- Only one of these will be populated depending on source_type
+    abn_ref             CHAR(11)                    REFERENCES abn_record(abn) ON DELETE SET NULL,
+    article_id          UUID                        REFERENCES news_article(article_id) ON DELETE SET NULL,
+    report_id           UUID,                       -- FK placeholder for a future REPORT table
+
+    -- Location detail
+    label               VARCHAR(255),               -- Human-readable e.g. "Port of Melbourne"
+    address_raw         TEXT,                       -- Raw extracted address string
+    suburb              VARCHAR(100),
+    state               CHAR(3),
+    postcode            CHAR(4),
+    country             CHAR(2)     NOT NULL DEFAULT 'AU',  -- ISO 3166-1 alpha-2
+    latitude            DOUBLE PRECISION,
+    longitude           DOUBLE PRECISION,
+
+    -- Provenance & confidence
+    confidence          location_confidence_enum    NOT NULL DEFAULT 'medium',
+    llm_model_version   VARCHAR(50),                -- Set if extracted via LLM
+    prov_agent          VARCHAR(255),               -- Service/agent that inferred the location
+    extracted_at        TIMESTAMP                   NOT NULL DEFAULT NOW(),
+
+    -- Temporal validity
+    valid_from          TIMESTAMP                   NOT NULL DEFAULT NOW(),
+    valid_to            TIMESTAMP,                  -- NULL = currently active
+
+    -- Prevent duplicate inferences from the same source
+    CONSTRAINT uq_inferred_location_source
+        UNIQUE NULLS NOT DISTINCT (company_id, source_type, abn_ref, article_id, latitude, longitude)
+);
+
+-- Indexes
+CREATE INDEX idx_inferred_loc_company_id    ON inferred_location(company_id);
+CREATE INDEX idx_inferred_loc_source_type   ON inferred_location(source_type);
+CREATE INDEX idx_inferred_loc_state_postcode ON inferred_location(state, postcode);
+CREATE INDEX idx_inferred_loc_valid         ON inferred_location(valid_from, valid_to);
+-- Optional PostGIS spatial index:
+-- CREATE INDEX idx_inferred_loc_geom ON inferred_location USING GIST(ST_MakePoint(longitude, latitude));

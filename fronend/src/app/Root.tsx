@@ -10,9 +10,10 @@ const titles: Record<string, { title: string; subtitle: string }> = {
   analyse: { title: 'Analyse', subtitle: 'Spatial risk & evidence exploration' },
   knowledge: { title: 'Knowledge Graph', subtitle: 'Claims, sources & provenance' },
   watchlist: { title: 'Watchlist', subtitle: 'Track biodiversity risk changes' },
+  spatial: { title: 'Spatial Analysis', subtitle: 'Biodiversity risk dashboard' },
 };
 
-const PROTECTED_PAGES = ['/app/overview', '/app/analyse', '/app/knowledge', '/app/watchlist'];
+const PROTECTED_PAGES = ['/app/overview', '/app/analyse', '/app/knowledge', '/app/watchlist', '/app/spatial'];
 
 export function Root() {
   const location = useLocation();

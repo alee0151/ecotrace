@@ -63,6 +63,11 @@ export interface SearchResponse {
   input_type: 'barcode' | 'brand' | 'company_or_abn';
   input_value: string;
   resolution_status: 'pending' | 'resolved' | 'failed';
+  resolved_ids?: {
+    company_id?: string | null;
+    brand_id?: string | null;
+    product_id?: string | null;
+  };
   pipeline_steps: string[];
   result: SearchResult;
 }
@@ -150,6 +155,87 @@ export interface UploadResponse {
   filename?: string;
 }
 
+export interface SpatialSpeciesRecord {
+  scientific_name: string;
+  common_name?: string | null;
+  taxon_rank?: string | null;
+  record_count: number;
+  iucn_category?: string | null;
+  iucn_category_name?: string | null;
+  threat_weight: number;
+  iucn_url?: string | null;
+}
+
+export interface SpatialLayerAResponse {
+  status: 'success' | 'loading' | 'failed';
+  generated_at?: string;
+  started_at?: string;
+  error?: string;
+  query_id?: string;
+  query?: {
+    query_id: string;
+    input_type: string;
+    input_value: string;
+    resolution_status: string;
+  };
+  company?: {
+    company_id: string;
+    legal_name?: string | null;
+    abn?: string | null;
+    entity_type?: string | null;
+    company_status?: string | null;
+    state?: string | null;
+    postcode?: string | null;
+    gst_registered?: boolean | null;
+  };
+  inferred_location?: {
+    label: string;
+    address_raw?: string | null;
+    state?: string | null;
+    postcode?: string | null;
+    country: string;
+    lat: number;
+    lon: number;
+    radius_km: number;
+    confidence: string;
+    method: string;
+    source: string;
+    location_id?: string | null;
+  };
+  location?: {
+    lat: number;
+    lon: number;
+    radius_km: number;
+  } | {
+    label: string;
+    lat: number;
+    lon: number;
+    radius_km: number;
+    confidence: string;
+    method: string;
+    source: string;
+    state?: string | null;
+    postcode?: string | null;
+    country?: string;
+  };
+  data_sources?: string[];
+  total_ala_records?: number;
+  unique_species_count?: number;
+  iucn_assessed_species?: number;
+  threatened_species_count?: number;
+  species_threat_score?: number;
+  score_breakdown?: Record<string, number>;
+  threatened_species?: SpatialSpeciesRecord[];
+  all_species?: SpatialSpeciesRecord[];
+}
+
+export interface SpatialLayerAParams {
+  lat: number;
+  lon: number;
+  radius_km?: number;
+  max_species?: number;
+}
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 /**
@@ -219,6 +305,34 @@ export const uploadDocument = (file: File) => {
   form.append('file', file);
   return postForm<UploadResponse>('/api/upload', form);
 };
+
+/**
+ * GET /api/spatial/layer-a
+ * Species occurrence and IUCN threat scoring for a site location.
+ */
+export const getSpatialLayerA = ({
+  lat,
+  lon,
+  radius_km = 10,
+  max_species = 50,
+}: SpatialLayerAParams) => {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    radius_km: String(radius_km),
+    max_species: String(max_species),
+  });
+  return get<SpatialLayerAResponse>(`/api/spatial/layer-a?${params.toString()}`);
+};
+
+/**
+ * GET /api/spatial/query/:query_id
+ * Layer A spatial analysis inferred from the company attached to a search query.
+ */
+export const getSpatialAnalysisForQuery = (queryId: string, force = false) =>
+  get<SpatialLayerAResponse>(
+    `/api/spatial/query/${encodeURIComponent(queryId)}${force ? '?force=true' : ''}`
+  );
 
 /**
  * GET /health

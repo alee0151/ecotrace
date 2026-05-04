@@ -1,10 +1,11 @@
-import { Leaf, Search, Building2, Map, GitBranch, TrendingUp, Star } from 'lucide-react';
+import { Leaf, Search, Building2, Map, GitBranch, TrendingUp, Star,Globe2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 export type PageId =
   | 'search'
   | 'overview'
   | 'analyse'
+  | "spatial"
   | 'knowledge'
   | 'watchlist';
 
@@ -14,6 +15,7 @@ const items: NavItem[] = [
   { id: 'search', label: 'Consumer Search', icon: Search, group: 'Consumer' },
   { id: 'overview', label: 'Company Overview', icon: Building2, group: 'Consumer' },
   { id: 'analyse', label: 'Analyse', icon: Map, group: 'Analysis' },
+  { id: 'spatial', label: 'Spatial Analyse', icon: Globe2, group: 'Analysis'},
   { id: 'knowledge', label: 'Knowledge Graph', icon: GitBranch, group: 'Analysis' },
   { id: 'watchlist', label: 'Watchlist', icon: Star, group: 'Investor' },
 ];

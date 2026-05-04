@@ -158,6 +158,12 @@ export function ConsumerSearch() {
     }
 
     const preview = resolveData.resolution || {};
+    if (resolveData.query_id) {
+      localStorage.setItem('query_id', resolveData.query_id);
+    }
+    if (resolveData.resolved_company_id) {
+      localStorage.setItem('company_id', resolveData.resolved_company_id);
+    }
     setResolutionPreview(preview);
     setProgressStep(1);
     setResolved({
@@ -195,6 +201,9 @@ export function ConsumerSearch() {
     if (data.query_id) {
       localStorage.setItem('query_id', data.query_id);
     }
+    if (data.resolved_company_id) {
+      localStorage.setItem('company_id', data.resolved_company_id);
+    }
     setProgressStep(4);
     localStorage.setItem('company_analysis', JSON.stringify(data));
     setAnalysis(data);
@@ -228,6 +237,9 @@ export function ConsumerSearch() {
     }
 
     localStorage.setItem('query_id', data.query_id);
+    if (data.resolved_ids?.company_id) {
+      localStorage.setItem('company_id', data.resolved_ids.company_id);
+    }
     const result = data.result;
     if (!result) {
       throw new Error('No matching result found.');
@@ -528,9 +540,14 @@ export function ConsumerSearch() {
                   )}
                   <div className="mt-2"><Confidence value={Math.min(100, Math.max(0, resolved.score))} /></div>
                 </div>
-                <button onClick={() => navigate('/app/overview')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm">
-                  View full report <ArrowRight size={14} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => navigate('/app/spatial')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm">
+                    Spatial analysis <MapPin size={14} />
+                  </button>
+                  <button onClick={() => navigate('/app/overview')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-sm">
+                    View full report <ArrowRight size={14} />
+                  </button>
+                </div>
               </div>
             </Card>
 
