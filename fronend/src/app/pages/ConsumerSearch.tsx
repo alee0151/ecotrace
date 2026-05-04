@@ -30,6 +30,7 @@ import {
   getSpatialAnalysisForQuery,
   resolveCompanyForAnalysis,
   search as searchEntity,
+  type SearchResult,
   type SpatialLayerAResponse,
 } from '../../lib/api';
 
@@ -145,6 +146,45 @@ function buildSearchBody(searchMode: SearchMode, searchValue: string) {
   if (searchMode === 'barcode') return { barcode: searchValue, brand: '', company_or_abn: '' };
   if (searchMode === 'brand') return { barcode: '', brand: searchValue, company_or_abn: '' };
   return { barcode: '', brand: '', company_or_abn: searchValue };
+}
+
+function ownedCompanyAnalysisTarget(result: SearchResult): string | null {
+  return (
+    result.company?.abn ||
+    result.abn_verification?.abn ||
+    result.company?.legal_name ||
+    result.abn_verification?.legal_name ||
+    result.legal_owner ||
+    result.brand_owner ||
+    result.manufacturer ||
+    null
+  );
+}
+
+function resolutionPreviewFromSearchResult(result: SearchResult, fallback: string): CompanyResolutionPreview {
+  return {
+    legal_name: result.company?.legal_name || result.abn_verification?.legal_name || result.legal_owner || result.brand_owner || fallback,
+    normalized_name: result.abn_verification?.legal_name || result.company?.legal_name || result.legal_owner || result.brand_clean || fallback,
+    abn: result.company?.abn || result.abn_verification?.abn,
+    state: result.company?.state || result.abn_verification?.state,
+    postcode: result.company?.postcode || result.abn_verification?.postcode,
+    abr: {
+      success: Boolean(result.company?.abn || result.abn_verification?.success),
+      message: result.message,
+    },
+  };
+}
+
+function resolvedEntityFromSearchResult(result: SearchResult, fallback: string): ResolvedEntity {
+  return {
+    brand: result.brand?.brand_name || result.brand_clean || result.brand_owner || result.brand_raw || result.input_value || fallback,
+    product: result.product?.product_name || result.company?.legal_name || result.brand?.brand_name || result.input_value || 'Unknown product',
+    parent: result.company?.legal_name || result.legal_owner || result.manufacturer || result.abn_verification?.legal_name || result.brand_owner || 'Unknown company',
+    abn: result.company?.abn || result.abn_verification?.abn || 'N/A',
+    score: result.confidence || 50,
+    source: result.source,
+    imageUrl: result.product?.image_url,
+  };
 }
 
 function evidenceReason(record: ReturnType<typeof allEvidenceRecords>[number]) {
@@ -299,7 +339,7 @@ export function ConsumerSearch() {
     scrollToResults();
   };
 
-  const analyseCompany = async (searchValue: string) => {
+  const analyseCompany = async (searchValue: string, displayResolved?: Partial<ResolvedEntity>) => {
     const formData = new FormData();
     formData.append('company_or_abn', searchValue);
     formData.append('news_limit', '3');
@@ -328,12 +368,13 @@ export function ConsumerSearch() {
     const profile = companyProfileFromAnalysis(analysisWithSpatial);
     const resolution = data.resolution || {};
     setResolved({
-      brand: resolution.normalized_name || searchValue,
-      product: resolution.legal_name || resolution.normalized_name || searchValue,
-      parent: resolution.legal_name || 'Unknown company',
-      abn: resolution.abn || 'N/A',
+      brand: displayResolved?.brand || resolution.normalized_name || searchValue,
+      product: displayResolved?.product || resolution.legal_name || resolution.normalized_name || searchValue,
+      parent: resolution.legal_name || displayResolved?.parent || 'Unknown company',
+      abn: resolution.abn || displayResolved?.abn || 'N/A',
       score: profile.score,
-      source: 'ABR + news APIs + uploaded reports',
+      source: displayResolved?.source || 'ABR + news APIs + uploaded reports',
+      imageUrl: displayResolved?.imageUrl,
     });
     scrollToResults();
   };
@@ -354,16 +395,19 @@ export function ConsumerSearch() {
       throw new Error('No matching result found.');
     }
 
-    setResolved({
-      brand: result.brand?.brand_name || result.brand_clean || result.brand_owner || result.brand_raw || result.input_value || 'Unknown brand',
-      product: result.product?.product_name || result.company?.legal_name || result.brand?.brand_name || result.input_value || 'Unknown product',
-      parent: result.company?.legal_name || result.legal_owner || result.manufacturer || result.abn_verification?.legal_name || 'Unknown company',
-      abn: result.company?.abn || result.abn_verification?.abn || 'N/A',
-      score: result.confidence || 50,
-      source: result.source,
-      imageUrl: result.product?.image_url,
-    });
+    const resolvedEntity = resolvedEntityFromSearchResult(result, searchValue);
+    setResolved(resolvedEntity);
+    setResolutionPreview(resolutionPreviewFromSearchResult(result, searchValue));
     scrollToResults();
+
+    const ownerTarget = ownedCompanyAnalysisTarget(result);
+    if (ownerTarget) {
+      setProgressStep(1);
+      await analyseCompany(ownerTarget, {
+        ...resolvedEntity,
+        source: `${result.source || 'Entity resolution'} + owner company analysis`,
+      });
+    }
   };
 
   const resolveWithValue = async (searchMode: SearchMode, rawValue: string) => {
@@ -509,7 +553,7 @@ export function ConsumerSearch() {
       </section>
 
       <section className="max-w-5xl mx-auto px-8 py-14">
-        {isLoading && mode === 'company' && (
+        {isLoading && (
           <Card className="p-5 mb-6 border-emerald-100">
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
               <div>
