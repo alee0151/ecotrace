@@ -31,12 +31,23 @@ def email_delivery_mode() -> str:
     return mode if mode in {"auto", "smtp", "outbox"} else "auto"
 
 
+def email_provider() -> str:
+    provider = (os.getenv("EMAIL_PROVIDER") or os.getenv("SMTP_PROVIDER") or "").strip().lower()
+    return provider if provider in {"resend", "smtp"} else ""
+
+
 def smtp_settings() -> Dict[str, Any]:
+    provider = email_provider()
+    resend_api_key = os.getenv("RESEND_API_KEY") or ""
+    use_resend_defaults = provider == "resend" or bool(resend_api_key and not os.getenv("SMTP_HOST"))
+    use_ssl = env_bool("SMTP_USE_SSL", False)
+
     return {
-        "host": (os.getenv("SMTP_HOST") or "").strip(),
+        "provider": "resend" if use_resend_defaults else provider,
+        "host": (os.getenv("SMTP_HOST") or ("smtp.resend.com" if use_resend_defaults else "")).strip(),
         "port": int(os.getenv("SMTP_PORT", "587")),
-        "username": (os.getenv("SMTP_USERNAME") or "").strip(),
-        "password": os.getenv("SMTP_PASSWORD") or "",
+        "username": (os.getenv("SMTP_USERNAME") or ("resend" if use_resend_defaults else "")).strip(),
+        "password": os.getenv("SMTP_PASSWORD") or resend_api_key,
         "from_email": (
             os.getenv("REPORT_FROM_EMAIL")
             or os.getenv("SMTP_FROM_EMAIL")
@@ -45,14 +56,17 @@ def smtp_settings() -> Dict[str, Any]:
         ).strip(),
         "from_name": (os.getenv("REPORT_FROM_NAME") or "EcoTrace").strip(),
         "reply_to": (os.getenv("REPORT_REPLY_TO") or "").strip(),
-        "use_tls": env_bool("SMTP_USE_TLS", True),
-        "use_ssl": env_bool("SMTP_USE_SSL", False),
+        "use_tls": env_bool("SMTP_USE_TLS", not use_ssl),
+        "use_ssl": use_ssl,
+        "require_auth": env_bool("SMTP_REQUIRE_AUTH", use_resend_defaults),
         "timeout": int(os.getenv("SMTP_TIMEOUT_SECONDS", "30")),
     }
 
 
 def smtp_is_configured(settings: Dict[str, Any]) -> bool:
-    return bool(settings["host"] and settings["from_email"])
+    has_endpoint = bool(settings["host"] and settings["from_email"])
+    has_auth = bool(settings["username"] and settings["password"])
+    return has_endpoint and (not settings["require_auth"] or has_auth)
 
 
 def smtp_has_partial_config(settings: Dict[str, Any]) -> bool:
@@ -638,9 +652,15 @@ def deliver_report_email(to_email: str, subject: str, html_body: str) -> Dict[st
     mode = email_delivery_mode()
 
     if mode == "smtp" and not smtp_is_configured(settings):
-        raise RuntimeError("SMTP delivery is required but SMTP_HOST and REPORT_FROM_EMAIL are not configured")
+        raise RuntimeError(
+            "SMTP delivery is required but email settings are incomplete. "
+            "For Resend, set EMAIL_PROVIDER=resend, RESEND_API_KEY, and REPORT_FROM_EMAIL."
+        )
     if mode == "auto" and smtp_has_partial_config(settings):
-        raise RuntimeError("SMTP is partially configured. Set SMTP_HOST and REPORT_FROM_EMAIL, or clear SMTP settings for outbox fallback")
+        raise RuntimeError(
+            "SMTP is partially configured. Complete the SMTP/Resend settings, "
+            "or clear them to use outbox fallback."
+        )
 
     if mode != "outbox" and smtp_is_configured(settings):
         message = EmailMessage()
@@ -659,7 +679,12 @@ def deliver_report_email(to_email: str, subject: str, html_body: str) -> Dict[st
             if settings["username"]:
                 smtp.login(settings["username"], settings["password"])
             smtp.send_message(message)
-        return {"delivery": "smtp", "to": to_email, "smtp_host": settings["host"]}
+        return {
+            "delivery": "smtp",
+            "to": to_email,
+            "smtp_host": settings["host"],
+            "smtp_provider": settings["provider"] or "smtp",
+        }
 
     if mode == "smtp":
         raise RuntimeError("SMTP delivery failed before outbox fallback could be used")

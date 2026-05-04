@@ -14,6 +14,7 @@ from report_service import (
     create_persisted_report,
     deliver_report_email,
     render_report_html,
+    smtp_settings,
     valid_email,
 )
 
@@ -168,7 +169,14 @@ class ReportServiceTests(unittest.TestCase):
     def test_email_without_smtp_writes_outbox_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch("report_service.REPORT_OUTBOX_DIR", new=Path(tmp)):
-                with patch.dict(os.environ, {"EMAIL_DELIVERY_MODE": "auto", "SMTP_HOST": "", "REPORT_FROM_EMAIL": ""}, clear=False):
+                with patch.dict(os.environ, {
+                    "EMAIL_DELIVERY_MODE": "auto",
+                    "EMAIL_PROVIDER": "",
+                    "SMTP_PROVIDER": "",
+                    "RESEND_API_KEY": "",
+                    "SMTP_HOST": "",
+                    "REPORT_FROM_EMAIL": "",
+                }, clear=False):
                     result = deliver_report_email(
                         "analyst@example.com",
                         "EcoTrace report",
@@ -179,7 +187,52 @@ class ReportServiceTests(unittest.TestCase):
             self.assertTrue(os.path.exists(result["path"]))
 
     def test_forced_smtp_requires_configuration(self):
-        with patch.dict(os.environ, {"EMAIL_DELIVERY_MODE": "smtp", "SMTP_HOST": "", "REPORT_FROM_EMAIL": ""}, clear=False):
+        with patch.dict(os.environ, {
+            "EMAIL_DELIVERY_MODE": "smtp",
+            "EMAIL_PROVIDER": "",
+            "SMTP_PROVIDER": "",
+            "RESEND_API_KEY": "",
+            "SMTP_HOST": "",
+            "REPORT_FROM_EMAIL": "",
+        }, clear=False):
+            with self.assertRaises(RuntimeError):
+                deliver_report_email(
+                    "analyst@example.com",
+                    "EcoTrace verification",
+                    "<html><body>Verify</body></html>",
+                )
+
+    def test_resend_provider_maps_to_smtp_settings(self):
+        env = {
+            "EMAIL_PROVIDER": "resend",
+            "RESEND_API_KEY": "re_test_key",
+            "REPORT_FROM_EMAIL": "hello@example.com",
+            "SMTP_HOST": "",
+            "SMTP_USERNAME": "",
+            "SMTP_PASSWORD": "",
+            "SMTP_PORT": "587",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            settings = smtp_settings()
+
+        self.assertEqual(settings["provider"], "resend")
+        self.assertEqual(settings["host"], "smtp.resend.com")
+        self.assertEqual(settings["port"], 587)
+        self.assertEqual(settings["username"], "resend")
+        self.assertEqual(settings["password"], "re_test_key")
+        self.assertTrue(settings["require_auth"])
+
+    def test_resend_provider_requires_api_key(self):
+        env = {
+            "EMAIL_DELIVERY_MODE": "smtp",
+            "EMAIL_PROVIDER": "resend",
+            "RESEND_API_KEY": "",
+            "REPORT_FROM_EMAIL": "hello@example.com",
+            "SMTP_HOST": "",
+            "SMTP_USERNAME": "",
+            "SMTP_PASSWORD": "",
+        }
+        with patch.dict(os.environ, env, clear=False):
             with self.assertRaises(RuntimeError):
                 deliver_report_email(
                     "analyst@example.com",
@@ -222,6 +275,9 @@ class ReportServiceTests(unittest.TestCase):
             "SMTP_USE_TLS": "true",
             "SMTP_USE_SSL": "false",
             "REPORT_FROM_EMAIL": "noreply@example.com",
+            "EMAIL_PROVIDER": "",
+            "SMTP_PROVIDER": "",
+            "RESEND_API_KEY": "",
         }
         with patch.dict(os.environ, env, clear=False):
             with patch("report_service.smtplib.SMTP", new=FakeSMTP):
@@ -232,6 +288,60 @@ class ReportServiceTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["delivery"], "smtp")
+        self.assertTrue(FakeSMTP.tls_started)
+        self.assertTrue(FakeSMTP.logged_in)
+        self.assertTrue(FakeSMTP.sent)
+
+    def test_resend_delivery_uses_api_key_auth(self):
+        class FakeSMTP:
+            sent = False
+            logged_in = False
+            tls_started = False
+
+            def __init__(self, host, port, timeout):
+                self.host = host
+                self.port = port
+                self.timeout = timeout
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def starttls(self):
+                FakeSMTP.tls_started = True
+
+            def login(self, username, password):
+                FakeSMTP.logged_in = username == "resend" and password == "re_test_key"
+
+            def send_message(self, message):
+                FakeSMTP.sent = (
+                    message["From"] == "EcoTrace <hello@example.com>"
+                    and message["To"] == "analyst@example.com"
+                )
+
+        env = {
+            "EMAIL_DELIVERY_MODE": "smtp",
+            "EMAIL_PROVIDER": "resend",
+            "RESEND_API_KEY": "re_test_key",
+            "REPORT_FROM_EMAIL": "hello@example.com",
+            "SMTP_HOST": "",
+            "SMTP_USERNAME": "",
+            "SMTP_PASSWORD": "",
+            "SMTP_USE_TLS": "true",
+            "SMTP_USE_SSL": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("report_service.smtplib.SMTP", new=FakeSMTP):
+                result = deliver_report_email(
+                    "analyst@example.com",
+                    "EcoTrace verification",
+                    "<html><body>Verify</body></html>",
+                )
+
+        self.assertEqual(result["delivery"], "smtp")
+        self.assertEqual(result["smtp_provider"], "resend")
         self.assertTrue(FakeSMTP.tls_started)
         self.assertTrue(FakeSMTP.logged_in)
         self.assertTrue(FakeSMTP.sent)
