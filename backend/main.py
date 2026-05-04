@@ -244,6 +244,10 @@ def warm_iucn_cache_in_background():
     Start Layer A's IUCN Australia cache as soon as the backend is live.
     The cache is kept in memory for the lifetime of this backend process.
     """
+    status = get_iucn_cache_status()
+    if status.get("state") in {"loading", "ready"}:
+        return status
+
     def _warm():
         try:
             count = ensure_iucn_cache_loaded()
@@ -253,6 +257,7 @@ def warm_iucn_cache_in_background():
 
     thread = threading.Thread(target=_warm, daemon=True)
     thread.start()
+    return get_iucn_cache_status()
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -1854,7 +1859,9 @@ def spatial_analysis_for_query(query_id: str, force: bool = Query(False)):
 
 
 @app.get("/api/spatial/iucn-cache")
-def spatial_iucn_cache_status():
+def spatial_iucn_cache_status(warm: bool = Query(True)):
+    if warm:
+        warm_iucn_cache_in_background()
     return get_iucn_cache_status()
 
 

@@ -60,8 +60,8 @@ Important values:
 ```env
 SCM_DO_BUILD_DURING_DEPLOYMENT=true
 ENABLE_ORYX_BUILD=true
-CORS_ALLOW_ORIGINS=https://seeco-frontend-h9hxagc8hvhffegt.australiaeast-01.azurewebsites.net
-FRONTEND_BASE_URL=https://<your-frontend-app>.azurewebsites.net
+CORS_ALLOW_ORIGINS=https://seeco.me,https://www.seeco.me,https://<your-frontend-app>.azurewebsites.net
+FRONTEND_BASE_URL=https://seeco.me
 ```
 
 For Resend email delivery:
@@ -78,6 +78,15 @@ SMTP_USE_SSL=false
 ```
 
 The `REPORT_FROM_EMAIL` domain must be verified in Resend. Resend SMTP uses `smtp.resend.com`, username `resend`, and your API key as the password; the app fills those values automatically when `EMAIL_PROVIDER=resend` is set.
+
+For Layer A spatial analysis, keep the IUCN cache warmup enabled:
+
+```env
+WARM_IUCN_CACHE_ON_STARTUP=true
+IUCN_CACHE_MAX_AGE_HOURS=168
+```
+
+The backend warms the IUCN Australia cache on App Service startup. The frontend also calls `/api/spatial/iucn-cache?warm=true` once when the app loads so a cold backend starts warming before the user reaches Spatial Analysis. Later searches reuse the same in-memory cache for the lifetime of the backend worker process.
 
 The backend workflow deploys `backend`, `config`, `startup.sh`, `runtime.txt`, and the root `requirements.txt`. The root requirements file points Azure to `backend/requirements.txt`.
 
@@ -170,7 +179,7 @@ https://<your-frontend-app>.azurewebsites.net
 If the frontend loads but API calls fail, check:
 
 - `VITE_API_BASE_URL` in GitHub secrets points to the backend URL.
-- `CORS_ALLOW_ORIGINS` in backend App Service contains the frontend URL exactly.
+- `CORS_ALLOW_ORIGINS` in backend App Service contains every frontend origin exactly, including custom domains such as `https://seeco.me` and `https://www.seeco.me`.
 - Backend App Service logs show Gunicorn starting `backend.main:app`.
 
 ## 7. Azure CLI Alternative

@@ -52,6 +52,18 @@ export function apiUrl(path: string): string {
   return `${BASE}${path}`;
 }
 
+export interface IucnCacheStatus {
+  state: 'empty' | 'loading' | 'ready' | 'failed';
+  count: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  source?: string | null;
+  cache_file?: string;
+}
+
+export const warmIucnCache = () => get<IucnCacheStatus>('/api/spatial/iucn-cache?warm=true');
+
 export interface RequestVerificationResponse {
   status: 'sent';
   email: string;

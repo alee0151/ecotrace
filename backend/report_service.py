@@ -39,13 +39,19 @@ def email_provider() -> str:
 def smtp_settings() -> Dict[str, Any]:
     provider = email_provider()
     resend_api_key = os.getenv("RESEND_API_KEY") or ""
-    use_resend_defaults = provider == "resend" or bool(resend_api_key and not os.getenv("SMTP_HOST"))
+    configured_host = (os.getenv("SMTP_HOST") or "").strip()
+    is_resend_host = configured_host.lower() == "smtp.resend.com"
+    use_resend_defaults = (
+        provider == "resend"
+        or is_resend_host
+        or bool(resend_api_key and not configured_host)
+    )
     use_ssl = env_bool("SMTP_USE_SSL", False)
     use_tls = True if use_resend_defaults and not use_ssl else env_bool("SMTP_USE_TLS", not use_ssl)
 
     return {
         "provider": "resend" if use_resend_defaults else provider,
-        "host": (os.getenv("SMTP_HOST") or ("smtp.resend.com" if use_resend_defaults else "")).strip(),
+        "host": configured_host or ("smtp.resend.com" if use_resend_defaults else ""),
         "port": int(os.getenv("SMTP_PORT", "587")),
         "username": (os.getenv("SMTP_USERNAME") or ("resend" if use_resend_defaults else "")).strip(),
         "password": os.getenv("SMTP_PASSWORD") or resend_api_key,
