@@ -4,7 +4,7 @@ abn_pipeline.py
 
 Purpose
 -------
-Handles both ABN number lookup and company name search for the EcoTrace pipeline.
+Handles both ABN number lookup and company name search for the Seeco pipeline.
 
 This module owns all ABR (Australian Business Register) Web Services calls
 so they are not scattered across main.py, barcode_pipeline.py, and brand_pipeline.py.
@@ -379,7 +379,7 @@ def search_company_name_with_abr(company_name: str) -> Dict[str, Any]:
     headers   = {
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction":   _ABR_SOAP_ACTION,
-        "User-Agent":   "EcoTrace-App/1.0 (student project)",
+        "User-Agent":   "Seeco-App/1.0 (student project)",
     }
 
     try:

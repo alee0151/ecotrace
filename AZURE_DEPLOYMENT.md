@@ -1,4 +1,4 @@
-# EcoTrace Azure Deployment
+# Seeco Azure Deployment
 
 This repo deploys as two separate Azure resources:
 
@@ -36,9 +36,9 @@ Create these in the same resource group:
 Recommended names:
 
 ```text
-ecotrace-frontend
-ecotrace-backend
-ecotrace-db
+seeco-frontend
+seeco-backend
+seeco-db
 ```
 
 ## 2. Configure Backend App Service
@@ -71,7 +71,7 @@ EMAIL_DELIVERY_MODE=smtp
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=<your-resend-api-key>
 REPORT_FROM_EMAIL=noreply@<your-verified-domain>
-REPORT_FROM_NAME=EcoTrace
+REPORT_FROM_NAME=Seeco
 SMTP_PORT=587
 SMTP_USE_TLS=true
 SMTP_USE_SSL=false

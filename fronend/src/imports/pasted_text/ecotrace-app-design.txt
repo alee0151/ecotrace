@@ -1,4 +1,4 @@
-Design a complete responsive web application for EcoTrace, an Australian biodiversity intelligence platform that helps everyday Australians and investors understand a company’s biodiversity impact. The product should feel trustworthy, clean, eco-friendly, and modern, with a premium SaaS aesthetic. Use a soft cream or white background, green and blue palette, rounded cards, subtle shadows, generous whitespace, and flat vector icons. The UI must be simple enough for everyday users but detailed enough for investors and ESG professionals.
+Design a complete responsive web application for Seeco, an Australian biodiversity intelligence platform that helps everyday Australians and investors understand a company’s biodiversity impact. The product should feel trustworthy, clean, eco-friendly, and modern, with a premium SaaS aesthetic. Use a soft cream or white background, green and blue palette, rounded cards, subtle shadows, generous whitespace, and flat vector icons. The UI must be simple enough for everyday users but detailed enough for investors and ESG professionals.
 The app should support three main user types:
 Everyday consumers searching by barcode, brand, or company name.
 Investors using reports, watchlists, and alerts.
@@ -99,7 +99,7 @@ Claim extraction cards.
 Risk reasoning cards.
 Confidence meter.
 Goal:
-Show how EcoTrace turns raw data into location-based biodiversity analysis.
+Show how Seeco turns raw data into location-based biodiversity analysis.
 4. Knowledge Graph & Provenance
 This page corresponds to Epic 4.
 Main layout:
@@ -141,7 +141,7 @@ Risk spillover tags.
 Parent-to-supplier connections.
 Source-based confidence states.
 Goal:
-Show that EcoTrace looks beyond the parent company into the value chain.
+Show that Seeco looks beyond the parent company into the value chain.
 6. Investor Dashboard
 This page corresponds to the investor workflow and TNFD output.
 Main layout:
@@ -175,7 +175,7 @@ Ingestion health card.
 Retry/error actions.
 QA approval workflow.
 Goal:
-Show that EcoTrace is a robust, maintainable system.
+Show that Seeco is a robust, maintainable system.
 8. B2B API & Export
 This page supports enterprise integrations.
 Main layout:

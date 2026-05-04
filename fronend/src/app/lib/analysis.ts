@@ -50,6 +50,14 @@ export type BackendCompanyAnalysis = {
     evidence_count?: number;
     evidence?: BackendEvidenceRecord[];
   };
+  spatial_analysis?: {
+    status?: 'success' | 'loading' | 'failed';
+    query_id?: string;
+    unique_species_count?: number;
+    iucn_assessed_species?: number;
+    threatened_species_count?: number;
+    species_threat_score?: number;
+  };
 };
 
 export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
@@ -98,7 +106,20 @@ export function loadCompanyAnalysis(): BackendCompanyAnalysis | null {
 
   try {
     const raw = window.localStorage.getItem('company_analysis');
-    return raw ? JSON.parse(raw) : null;
+    const analysis = raw ? JSON.parse(raw) as BackendCompanyAnalysis : null;
+    if (!analysis) return null;
+
+    const spatialRaw = window.localStorage.getItem('latest_spatial_analysis');
+    const spatial = spatialRaw ? JSON.parse(spatialRaw) : null;
+    if (
+      spatial?.status === 'success' &&
+      typeof spatial.species_threat_score === 'number' &&
+      (!analysis.query_id || !spatial.query_id || spatial.query_id === analysis.query_id)
+    ) {
+      return { ...analysis, spatial_analysis: spatial };
+    }
+
+    return analysis;
   } catch {
     return null;
   }
@@ -130,6 +151,11 @@ export function riskLevelFromScore(score: number): RiskLevel {
 
 export function biodiversityScore(analysis: BackendCompanyAnalysis | null): number {
   if (!analysis) return 45;
+
+  const spatialScore = analysis.spatial_analysis?.species_threat_score;
+  if (typeof spatialScore === 'number' && Number.isFinite(spatialScore)) {
+    return Math.max(0, Math.min(100, Math.round(spatialScore)));
+  }
 
   const records = allEvidenceRecords(analysis);
   const riskRecords = records.filter(record =>

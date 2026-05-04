@@ -1,7 +1,7 @@
 
-  # EcoTrace
+  # Seeco
 
-  This is a code bundle for EcoTrace. The original project is available at https://www.figma.com/design/6sMXPGe5bxJkewPTWeLi9i/EcoTrace.
+  This is a code bundle for Seeco. The original project is available at https://www.figma.com/design/6sMXPGe5bxJkewPTWeLi9i/Seeco.
 
   ## Running the code
 

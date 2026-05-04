@@ -1,1 +1,1 @@
-"""EcoTrace backend package."""
+"""Seeco backend package."""

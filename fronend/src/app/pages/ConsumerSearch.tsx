@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   ArrowRight,
@@ -27,8 +27,10 @@ import {
 } from '../lib/analysis';
 import {
   analyseCompanyWithReports,
+  getSpatialAnalysisForQuery,
   resolveCompanyForAnalysis,
   search as searchEntity,
+  type SpatialLayerAResponse,
 } from '../../lib/api';
 
 const HERO_IMG = 'https://images.unsplash.com/photo-1758702160898-6f96d1db5b73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600';
@@ -83,6 +85,62 @@ type ResolvedEntity = {
   imageUrl?: string;
 };
 
+type PersistedConsumerSearch = {
+  mode: SearchMode;
+  value: string;
+  queryId: string | null;
+  resolutionPreview: CompanyResolutionPreview | null;
+  analysis: BackendCompanyAnalysis | null;
+  resolved: ResolvedEntity | null;
+  spatialAnalysis: SpatialLayerAResponse | null;
+};
+
+const CONSUMER_SEARCH_STORAGE_KEY = 'consumer_search_state';
+const LATEST_SPATIAL_STORAGE_KEY = 'latest_spatial_analysis';
+
+function readPersistedConsumerSearch(): PersistedConsumerSearch | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(CONSUMER_SEARCH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLatestSpatialAnalysis(): SpatialLayerAResponse | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(LATEST_SPATIAL_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistConsumerSearch(state: PersistedConsumerSearch) {
+  if (typeof window === 'undefined') return;
+
+  window.localStorage.setItem(CONSUMER_SEARCH_STORAGE_KEY, JSON.stringify(state));
+}
+
+function spatialScore(layerA: SpatialLayerAResponse | null | undefined): number | null {
+  const score = layerA?.species_threat_score;
+  if (typeof score !== 'number' || !Number.isFinite(score)) return null;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function mergeAnalysisWithSpatial(
+  analysis: BackendCompanyAnalysis | null,
+  layerA: SpatialLayerAResponse,
+): BackendCompanyAnalysis | null {
+  if (!analysis) return null;
+  if (analysis.query_id && layerA.query_id && analysis.query_id !== layerA.query_id) return analysis;
+  return { ...analysis, spatial_analysis: layerA };
+}
+
 function buildSearchBody(searchMode: SearchMode, searchValue: string) {
   if (searchMode === 'barcode') return { barcode: searchValue, brand: '', company_or_abn: '' };
   if (searchMode === 'brand') return { barcode: '', brand: searchValue, company_or_abn: '' };
@@ -99,21 +157,31 @@ function evidenceReason(record: ReturnType<typeof allEvidenceRecords>[number]) {
 
 export function ConsumerSearch() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<SearchMode>('company');
-  const [value, setValue] = useState('');
+  const initialSearch = useRef(readPersistedConsumerSearch()).current;
+  const initialSpatial = useRef<SpatialLayerAResponse | null>((() => {
+    const latest = initialSearch?.spatialAnalysis || readLatestSpatialAnalysis();
+    if (!latest?.query_id || !initialSearch?.queryId || latest.query_id === initialSearch.queryId) return latest;
+    return null;
+  })()).current;
+  const [mode, setMode] = useState<SearchMode>(initialSearch?.mode || 'company');
+  const [value, setValue] = useState(initialSearch?.value || '');
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressStep, setProgressStep] = useState(0);
-  const [resolutionPreview, setResolutionPreview] = useState<CompanyResolutionPreview | null>(null);
-  const [analysis, setAnalysis] = useState<BackendCompanyAnalysis | null>(null);
-  const [resolved, setResolved] = useState<ResolvedEntity | null>(null);
+  const [queryId, setQueryId] = useState<string | null>(() => initialSearch?.queryId || localStorage.getItem('query_id'));
+  const [resolutionPreview, setResolutionPreview] = useState<CompanyResolutionPreview | null>(initialSearch?.resolutionPreview || null);
+  const [analysis, setAnalysis] = useState<BackendCompanyAnalysis | null>(initialSearch?.analysis || null);
+  const [resolved, setResolved] = useState<ResolvedEntity | null>(initialSearch?.resolved || null);
+  const [spatialAnalysis, setSpatialAnalysis] = useState<SpatialLayerAResponse | null>(initialSpatial || null);
   const [error, setError] = useState<string | null>(null);
 
   const resultsRef = useRef<HTMLDivElement>(null);
   const evidenceRecords = allEvidenceRecords(analysis);
   const newsCandidates: BackendNewsCandidate[] = analysis?.news?.candidates || [];
+  const effectiveSpatialAnalysis = spatialAnalysis || analysis?.spatial_analysis;
+  const assessedSpatialScore = spatialScore(effectiveSpatialAnalysis);
 
-  const scoreReasons = analysis
+  const evidenceScoreReasons = analysis
     ? evidenceRecords.length
       ? [
           ...evidenceRecords.slice(0, 2).map(evidenceReason),
@@ -137,6 +205,67 @@ export function ConsumerSearch() {
         'News and report evidence will appear here after analysis completes.',
         'Upload a company report to include document-based evidence.',
       ];
+  const scoreReasons = assessedSpatialScore !== null && effectiveSpatialAnalysis?.status === 'success'
+    ? [
+        `Spatial Layer A assessed ${effectiveSpatialAnalysis.iucn_assessed_species || 0} IUCN-listed species and ${effectiveSpatialAnalysis.threatened_species_count || 0} threatened species, producing a biodiversity score of ${assessedSpatialScore}/100.`,
+        ...evidenceScoreReasons,
+      ].slice(0, 3)
+    : evidenceScoreReasons;
+
+  useEffect(() => {
+    if (!resolved) return;
+
+    persistConsumerSearch({
+      mode,
+      value,
+      queryId,
+      resolutionPreview,
+      analysis,
+      resolved,
+      spatialAnalysis,
+    });
+  }, [analysis, mode, queryId, resolutionPreview, resolved, spatialAnalysis, value]);
+
+  useEffect(() => {
+    if (!queryId) return;
+
+    let cancelled = false;
+    let poll: number | undefined;
+
+    const loadSpatialScore = () => {
+      getSpatialAnalysisForQuery(queryId)
+        .then((data) => {
+          if (cancelled) return;
+
+          setSpatialAnalysis(data);
+
+          const score = spatialScore(data);
+          if (data.status === 'success' && score !== null) {
+            window.localStorage.setItem(LATEST_SPATIAL_STORAGE_KEY, JSON.stringify(data));
+            setResolved((current) => current ? { ...current, score } : current);
+            setAnalysis((current) => {
+              const next = mergeAnalysisWithSpatial(current, data);
+              if (next) {
+                window.localStorage.setItem('company_analysis', JSON.stringify(next));
+              }
+              return next;
+            });
+          } else if (data.status === 'loading') {
+            poll = window.setTimeout(loadSpatialScore, 5000);
+          }
+        })
+        .catch((err) => {
+          console.debug('Spatial biodiversity score request failed', err);
+        });
+    };
+
+    loadSpatialScore();
+
+    return () => {
+      cancelled = true;
+      if (poll) window.clearTimeout(poll);
+    };
+  }, [queryId]);
 
   const scrollToResults = () => {
     setTimeout(() => {
@@ -152,6 +281,7 @@ export function ConsumerSearch() {
     const preview = resolveData.resolution || {};
     if (resolveData.query_id) {
       localStorage.setItem('query_id', resolveData.query_id);
+      setQueryId(resolveData.query_id);
     }
     if (resolveData.resolved_company_id) {
       localStorage.setItem('company_id', resolveData.resolved_company_id);
@@ -183,15 +313,19 @@ export function ConsumerSearch() {
 
     if (data.query_id) {
       localStorage.setItem('query_id', data.query_id);
+      setQueryId(data.query_id);
     }
     if (data.resolved_company_id) {
       localStorage.setItem('company_id', data.resolved_company_id);
     }
     setProgressStep(4);
-    localStorage.setItem('company_analysis', JSON.stringify(data));
-    setAnalysis(data);
+    const analysisWithSpatial = spatialAnalysis?.status === 'success'
+      ? mergeAnalysisWithSpatial(data, spatialAnalysis) || data
+      : data;
+    localStorage.setItem('company_analysis', JSON.stringify(analysisWithSpatial));
+    setAnalysis(analysisWithSpatial);
 
-    const profile = companyProfileFromAnalysis(data);
+    const profile = companyProfileFromAnalysis(analysisWithSpatial);
     const resolution = data.resolution || {};
     setResolved({
       brand: resolution.normalized_name || searchValue,
@@ -211,6 +345,7 @@ export function ConsumerSearch() {
     }
 
     localStorage.setItem('query_id', data.query_id);
+    setQueryId(data.query_id);
     if (data.resolved_ids?.company_id) {
       localStorage.setItem('company_id', data.resolved_ids.company_id);
     }
@@ -245,6 +380,7 @@ export function ConsumerSearch() {
       setProgressStep(0);
       setAnalysis(null);
       setResolutionPreview(null);
+      setSpatialAnalysis(null);
 
       if (searchMode === 'company') {
         await resolveCompany(searchValue);

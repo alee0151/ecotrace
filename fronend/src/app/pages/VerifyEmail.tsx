@@ -22,8 +22,8 @@ export function VerifyEmail() {
       .then((result) => {
         const email = result.verification.email;
         const returnTo = result.verification.return_to || fallbackReturnTo;
-        localStorage.setItem('ecotrace_email_verified', 'true');
-        localStorage.setItem('ecotrace_verified_email', email);
+        localStorage.setItem('seeco_email_verified', 'true');
+        localStorage.setItem('seeco_verified_email', email);
         setState('verified');
         setMessage(`Verified ${email}. Redirecting...`);
         window.setTimeout(() => navigate(returnTo, { replace: true }), 1200);

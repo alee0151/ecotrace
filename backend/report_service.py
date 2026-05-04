@@ -61,7 +61,7 @@ def smtp_settings() -> Dict[str, Any]:
             or os.getenv("SMTP_USERNAME")
             or ""
         ).strip(),
-        "from_name": (os.getenv("REPORT_FROM_NAME") or "EcoTrace").strip(),
+        "from_name": (os.getenv("REPORT_FROM_NAME") or "Seeco").strip(),
         "reply_to": (os.getenv("REPORT_REPLY_TO") or "").strip(),
         "use_tls": use_tls,
         "use_ssl": use_ssl,
@@ -269,7 +269,7 @@ def build_query_report(
         or base.get("brand_name")
         or base.get("product_name")
         or base.get("input_value")
-        or "EcoTrace entity"
+        or "Seeco entity"
     )
 
     report_evidence = _analysis_records(analysis_payload, "reports")
@@ -318,7 +318,7 @@ def build_query_report(
         )
     summary_text = (
         f"{display_name} was resolved from {base.get('input_type')} input. "
-        f"EcoTrace found {evidence_count} persisted or extracted evidence record(s), "
+        f"Seeco found {evidence_count} persisted or extracted evidence record(s), "
         f"with {location_label} used as the primary spatial context when available."
     )
 
@@ -326,7 +326,7 @@ def build_query_report(
         {
             "query_id": str(base["query_id"]),
             "generated_at": generated_at,
-            "title": f"EcoTrace biodiversity report - {display_name}",
+            "title": f"Seeco biodiversity report - {display_name}",
             "executive_summary": summary_text,
             "key_findings": key_findings,
             "summary": {
@@ -386,7 +386,7 @@ def build_query_report(
 
 
 def render_report_html(report: Dict[str, Any]) -> str:
-    title = html.escape(_string(report.get("title"), "EcoTrace report"))
+    title = html.escape(_string(report.get("title"), "Seeco report"))
     summary = report.get("summary") or {}
     company = report.get("company") or {}
     brand = report.get("brand") or {}
@@ -502,7 +502,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
 <body>
   <main>
     <header>
-      <div class="muted">EcoTrace investor biodiversity dossier</div>
+      <div class="muted">Seeco investor biodiversity dossier</div>
       <h1>{title}</h1>
       <div class="muted">Generated {html.escape(_display_datetime(report.get("generated_at")))}</div>
     </header>
@@ -676,7 +676,7 @@ def deliver_report_email(to_email: str, subject: str, html_body: str) -> Dict[st
         message["To"] = to_email
         if settings["reply_to"]:
             message["Reply-To"] = settings["reply_to"]
-        message.set_content("Open this EcoTrace email in an HTML-capable email client.")
+        message.set_content("Open this Seeco email in an HTML-capable email client.")
         message.add_alternative(html_body, subtype="html")
 
         smtp_class = smtplib.SMTP_SSL if settings["use_ssl"] else smtplib.SMTP

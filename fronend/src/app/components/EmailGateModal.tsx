@@ -72,7 +72,7 @@ export function EmailGateModal({
 
             <div className="text-center mb-6">
               <div className="text-[20px] text-stone-900 mb-2">
-                Unlock {pageName ? `the ${pageName}` : 'EcoTrace Insights'}
+                Unlock {pageName ? `the ${pageName}` : 'Seeco Insights'}
               </div>
               <div className="text-[13px] text-stone-600 leading-relaxed">
                 Enter your email to access deep biodiversity analytics, supply chain risks, and verified evidence — free and no password required.
@@ -122,7 +122,7 @@ export function EmailGateModal({
 
               {showWhy && (
                 <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-[12px] text-stone-700 leading-relaxed animate-in slide-in-from-top-2">
-                  EcoTrace uses your email to provide persistent access to analyst reports, save your watchlist across devices, and send alerts when biodiversity risks change.
+                  Seeco uses your email to provide persistent access to analyst reports, save your watchlist across devices, and send alerts when biodiversity risks change.
                 </div>
               )}
             </div>

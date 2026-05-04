@@ -30,7 +30,7 @@ export function Sidebar({ active }: { active: PageId }) {
           <Leaf className="text-white" size={20} />
         </div>
         <div>
-          <div className="text-[15px] font-semibold text-stone-900 leading-tight">EcoTrace</div>
+          <div className="text-[15px] font-semibold text-stone-900 leading-tight">Seeco</div>
           <div className="text-[11px] text-stone-500 leading-tight">Biodiversity Intelligence</div>
         </div>
       </div>

@@ -55,7 +55,7 @@ class FakeReportCursor:
             return {
                 "report_id": "33333333-3333-3333-3333-333333333333",
                 "query_id": "11111111-1111-1111-1111-111111111111",
-                "title": "EcoTrace biodiversity report - BHP GROUP LIMITED",
+                "title": "Seeco biodiversity report - BHP GROUP LIMITED",
                 "format": "html",
                 "status": "generated",
                 "generated_at": datetime(2026, 5, 4, 9, 1, 0),
@@ -125,7 +125,7 @@ class ReportServiceTests(unittest.TestCase):
 
     def test_render_report_html_includes_layer_a_summary(self):
         report = {
-            "title": "EcoTrace biodiversity report - BHP GROUP LIMITED",
+            "title": "Seeco biodiversity report - BHP GROUP LIMITED",
             "generated_at": "2026-05-04T10:00:00+00:00",
             "executive_summary": "Layer A is available.",
             "key_findings": ["Layer A biodiversity scoring found 1 threatened species."],
@@ -179,7 +179,7 @@ class ReportServiceTests(unittest.TestCase):
                 }, clear=False):
                     result = deliver_report_email(
                         "analyst@example.com",
-                        "EcoTrace report",
+                        "Seeco report",
                         "<html><body>Report</body></html>",
                     )
 
@@ -198,7 +198,7 @@ class ReportServiceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 deliver_report_email(
                     "analyst@example.com",
-                    "EcoTrace verification",
+                    "Seeco verification",
                     "<html><body>Verify</body></html>",
                 )
 
@@ -276,7 +276,7 @@ class ReportServiceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 deliver_report_email(
                     "analyst@example.com",
-                    "EcoTrace verification",
+                    "Seeco verification",
                     "<html><body>Verify</body></html>",
                 )
 
@@ -323,7 +323,7 @@ class ReportServiceTests(unittest.TestCase):
             with patch("report_service.smtplib.SMTP", new=FakeSMTP):
                 result = deliver_report_email(
                     "analyst@example.com",
-                    "EcoTrace verification",
+                    "Seeco verification",
                     "<html><body>Verify</body></html>",
                 )
 
@@ -357,7 +357,7 @@ class ReportServiceTests(unittest.TestCase):
 
             def send_message(self, message):
                 FakeSMTP.sent = (
-                    message["From"] == "EcoTrace <hello@example.com>"
+                    message["From"] == "Seeco <hello@example.com>"
                     and message["To"] == "analyst@example.com"
                 )
 
@@ -376,7 +376,7 @@ class ReportServiceTests(unittest.TestCase):
             with patch("report_service.smtplib.SMTP", new=FakeSMTP):
                 result = deliver_report_email(
                     "analyst@example.com",
-                    "EcoTrace verification",
+                    "Seeco verification",
                     "<html><body>Verify</body></html>",
                 )
 

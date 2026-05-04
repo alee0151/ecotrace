@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-EcoTrace — Layer A: Species & Threat Data
+Seeco — Layer A: Species & Threat Data
 Datasets:
   1. ALA Biocache API  → species occurrences near location
   2. IUCN Red List v4  → threat category enrichment per species
@@ -311,7 +311,7 @@ def query_ala_species(lat: float, lon: float, radius_km: float,
     facet_results = data.get("facetResults", [])
     raw_species   = facet_results[0].get("fieldResult", []) if facet_results else []
 
-    # ── Step 2: Normalise to EcoTrace schema ───────────────────────────────────
+    # ── Step 2: Normalise to Seeco schema ──────────────────────────────────────
     species_list = []
     for s in raw_species:
         label = s.get("label", "").strip()
@@ -354,7 +354,7 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     global _iucn_au_cache
 
     print(f"\n{'='*65}")
-    print(f"  EcoTrace — Layer A: Species & Threat Data")
+    print(f"  Seeco — Layer A: Species & Threat Data")
     print(f"  Location : {lat}, {lon}  |  Radius: {radius_km}km")
     print(f"{'='*65}\n")
 

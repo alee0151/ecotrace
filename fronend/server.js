@@ -54,8 +54,8 @@ createServer((request, response) => {
     sendFile(response, join(distDir, "index.html"));
   } catch {
     response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("EcoTrace frontend failed to serve the request.");
+    response.end("Seeco frontend failed to serve the request.");
   }
 }).listen(port, "0.0.0.0", () => {
-  console.log(`EcoTrace frontend listening on port ${port}`);
+  console.log(`Seeco frontend listening on port ${port}`);
 });

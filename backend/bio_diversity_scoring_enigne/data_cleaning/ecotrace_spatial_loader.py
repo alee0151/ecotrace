@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-EcoTrace — Spatial Data Cleaning & PostGIS Loader
+Seeco — Spatial Data Cleaning & PostGIS Loader
 Datasets: CAPAD, KBA, IBRA v7
 Pipeline:
   1. Load shapefile/GeoJSON
   2. Validate + clean geometry and attributes
   3. Reproject to WGS84 (EPSG:4326)
-  4. Standardise column names to EcoTrace schema
+  4. Standardise column names to Seeco schema
   5. Push to PostGIS with spatial index
 """
 
@@ -21,7 +21,7 @@ import os
 from datetime import datetime
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
-DB_URL = "postgresql://ecotrace:password@localhost:5432/ecotrace_db"
+DB_URL = "postgresql://seeco:password@localhost:5432/seeco_db"
 # Example: "postgresql://user:password@host:port/dbname"
 
 # File paths — update to your downloaded shapefile locations
@@ -120,7 +120,7 @@ def process_capad(path: str) -> gpd.GeoDataFrame:
     if gdf.crs != TARGET_CRS:
         gdf = gdf.to_crs(TARGET_CRS)
 
-    # ── Standardise column names to EcoTrace schema
+    # ── Standardise column names to Seeco schema
     col_map = {
         "PA_ID":       "pa_id",
         "NAME":        "name",
@@ -142,7 +142,7 @@ def process_capad(path: str) -> gpd.GeoDataFrame:
     rename = {k: v for k, v in col_map.items() if k in gdf.columns}
     gdf = gdf.rename(columns=rename)
 
-    # ── Keep only EcoTrace-relevant columns
+    # ── Keep only Seeco-relevant columns
     keep_cols = list(rename.values()) + ["geometry"]
     gdf = gdf[[c for c in keep_cols if c in gdf.columns]]
 
@@ -164,7 +164,7 @@ def process_capad(path: str) -> gpd.GeoDataFrame:
                 log.warning(f"  CAPAD: {invalid_area.sum()} rows with negative {num_col} set to NaN")
                 gdf.loc[invalid_area, num_col] = np.nan
 
-    # ── Classify Indigenous Protected Areas for EcoTrace flag
+    # ── Classify Indigenous Protected Areas for Seeco flag
     if "type_abbr" in gdf.columns:
         gdf["is_indigenous_pa"] = gdf["type_abbr"].str.upper().str.strip() == "IPA"
 
@@ -398,7 +398,7 @@ def print_validation_report(gdf: gpd.GeoDataFrame, name: str):
 # ── MAIN ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("="*65)
-    print("  EcoTrace — Spatial Data Cleaning & PostGIS Loader")
+    print("  Seeco — Spatial Data Cleaning & PostGIS Loader")
     print(f"  Run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*65)
 

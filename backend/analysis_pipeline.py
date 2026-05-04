@@ -1,5 +1,5 @@
 """
-Company analysis helpers for EcoTrace.
+Company analysis helpers for Seeco.
 
 This module adapts the news, report, and LLM evidence pipeline without folding
 that logic back into main.py.

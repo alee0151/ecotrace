@@ -1,6 +1,6 @@
-Add a new page to the EcoTrace Figma file called "Page 10 — Watchlist".
+Add a new page to the Seeco Figma file called "Page 10 — Watchlist".
 This page is part of the investor and conscious consumer workflow. 
-It should match EcoTrace's existing design language: 
+It should match Seeco's existing design language: 
 soft cream or white background, green and blue palette, rounded cards, 
 subtle shadows, generous whitespace, and flat vector icons.
 
@@ -23,9 +23,9 @@ Modal card specs:
 - Centered on screen, max width 480px
 - Rounded corners (radius 20px)
 - Soft white background
-- EcoTrace logo or wordmark at the top
+- Seeco logo or wordmark at the top
 - Subtle leaf or nature icon above the title
-- Headline text: "Unlock your EcoTrace Watchlist"
+- Headline text: "Unlock your Seeco Watchlist"
 - Supporting copy (one line): 
   "Enter your email to access and manage your personalised 
   biodiversity watchlist — free and no password required."
@@ -44,7 +44,7 @@ Form inside the modal:
   No password needed."
 - Below that: a subtle text link — "Why do we need your email?"
   (clicking expands an inline accordion with 2 short lines explaining 
-  that EcoTrace uses email to save your watchlist across devices and 
+  that Seeco uses email to save your watchlist across devices and 
   send alerts when your watched companies change)
 
 Modal states to design:
@@ -71,7 +71,7 @@ STEP 2 — MAIN WATCHLIST PAGE LAYOUT
 ─────────────────────────────────────────────
 
 After email verification, show the full Watchlist page.
-Use EcoTrace's standard desktop layout:
+Use Seeco's standard desktop layout:
 - Left sidebar: navigation (same style as all other pages)
 - Top bar: search, notifications bell, user avatar with verified 
   email badge showing a green tick + truncated email address

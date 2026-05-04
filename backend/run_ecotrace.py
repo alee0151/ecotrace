@@ -1,5 +1,5 @@
 """
-Smoke-test configured EcoTrace APIs with a real company query.
+Smoke-test configured Seeco APIs with a real company query.
 
 This script prints API status, result counts, and a few titles only. It does not
 print API keys or full article text.
@@ -860,7 +860,7 @@ def get_json(
     headers: dict[str, str] | None = None,
     quiet: bool = False,
 ) -> dict[str, object] | None:
-    request_headers = {"User-Agent": "EcoTrace/1.0"}
+    request_headers = {"User-Agent": "Seeco/1.0"}
     if headers:
         request_headers.update(headers)
     request = urllib.request.Request(url, headers=request_headers)

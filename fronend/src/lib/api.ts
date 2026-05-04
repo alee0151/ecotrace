@@ -1,5 +1,5 @@
 /**
- * api.ts — Centralised EcoTrace API client
+ * api.ts — Centralised Seeco API client
  *
  * All fetch calls to the FastAPI backend go through this file.
  * During development the Vite proxy rewrites /api/* → http://127.0.0.1:8000/api/*

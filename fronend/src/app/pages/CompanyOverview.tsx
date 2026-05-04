@@ -708,7 +708,7 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
   const ensureReport = async () => {
     if (!queryId) {
       setEmailStatus('error');
-      setMessage('Run a company search first so EcoTrace has a query_id to report on.');
+      setMessage('Run a company search first so Seeco has a query_id to report on.');
       return null;
     }
     if (reportId) return reportId;

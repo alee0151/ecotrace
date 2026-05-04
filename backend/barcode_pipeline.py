@@ -4,7 +4,7 @@ barcode_pipeline.py
 
 Purpose
 -------
-Handles the complete barcode input phase of the EcoTrace search pipeline.
+Handles the complete barcode input phase of the Seeco search pipeline.
 
 Barcode pipeline flow
 ---------------------
@@ -64,7 +64,7 @@ except ImportError:
 # Constants
 # ============================================================
 
-_OFF_USER_AGENT  = "EcoTrace-App/1.0 (student project; contact via GitHub)"
+_OFF_USER_AGENT  = "Seeco-App/1.0 (student project; contact via GitHub)"
 _DEFAULT_TIMEOUT = 20
 
 

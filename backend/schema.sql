@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 
 -- ============================================================
--- EcoTrace Database Schema
+-- Seeco Database Schema
 -- Epic 1
 -- Entities: USER, SEARCH_QUERY, COMPANY, ABN_RECORD,
 --           BRAND, TRADEMARK, PRODUCT, GRAPH_NODE

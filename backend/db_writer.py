@@ -2,7 +2,7 @@
 db_writer.py
 ============
 
-Upsert helpers for each EcoTrace entity table.
+Upsert helpers for each Seeco entity table.
 Called from main.py after each pipeline phase completes.
 
 Design rules

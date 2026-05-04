@@ -4,7 +4,7 @@ brand_pipeline.py
 
 Purpose
 -------
-Handles the complete brand name input phase of the EcoTrace search pipeline.
+Handles the complete brand name input phase of the Seeco search pipeline.
 
 Brand pipeline flow
 -------------------

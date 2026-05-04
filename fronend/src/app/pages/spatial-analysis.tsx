@@ -25,6 +25,27 @@ function scoreTone(score?: number): "up" | "down" | "flat" {
   return "up";
 }
 
+function persistSpatialScore(data: SpatialLayerAResponse) {
+  if (data.status !== "success" || typeof data.species_threat_score !== "number") return;
+
+  localStorage.setItem("latest_spatial_analysis", JSON.stringify(data));
+
+  try {
+    const raw = localStorage.getItem("company_analysis");
+    if (!raw) return;
+
+    const analysis = JSON.parse(raw);
+    if (analysis?.query_id && data.query_id && analysis.query_id !== data.query_id) return;
+
+    localStorage.setItem(
+      "company_analysis",
+      JSON.stringify({ ...analysis, spatial_analysis: data }),
+    );
+  } catch {
+    // Keep the spatial page usable even if a previous localStorage payload is stale.
+  }
+}
+
 export function SpatialAnalysisPage() {
   const [site, setSite] = useState<SpatialSite>(spatialSites[0]);
   const [layerA, setLayerA] = useState<SpatialLayerAResponse | null>(null);
@@ -91,6 +112,7 @@ export function SpatialAnalysisPage() {
       .then((data) => {
         if (!cancelled) {
           setLayerA(data);
+          persistSpatialScore(data);
           const dynamicSite = siteFromSpatialResponse(data);
           if (dynamicSite) {
             setSite(dynamicSite);

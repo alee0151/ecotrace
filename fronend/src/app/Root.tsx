@@ -19,12 +19,12 @@ const PROTECTED_PAGES = ['/app/overview', '/app/analyse', '/app/knowledge', '/ap
 export function Root() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [emailVerified, setEmailVerified] = useState(() => localStorage.getItem('ecotrace_email_verified') === 'true');
+  const [emailVerified, setEmailVerified] = useState(() => localStorage.getItem('seeco_email_verified') === 'true');
   const [lastUnprotectedRoute, setLastUnprotectedRoute] = useState<string>('/app/search');
 
   const currentPath = location.pathname;
   const pageKey = currentPath.replace('/app/', '');
-  const meta = titles[pageKey] || { title: 'EcoTrace', subtitle: '' };
+  const meta = titles[pageKey] || { title: 'Seeco', subtitle: '' };
   
   const requiresVerification = PROTECTED_PAGES.includes(currentPath) && !emailVerified;
 
@@ -35,7 +35,7 @@ export function Root() {
   }, []);
 
   useEffect(() => {
-    if (localStorage.getItem('ecotrace_email_verified') === 'true') {
+    if (localStorage.getItem('seeco_email_verified') === 'true') {
       setEmailVerified(true);
     }
   }, [currentPath]);
@@ -52,8 +52,8 @@ export function Root() {
   };
 
   const handleVerified = (email: string) => {
-    localStorage.setItem('ecotrace_email_verified', 'true');
-    localStorage.setItem('ecotrace_verified_email', email);
+    localStorage.setItem('seeco_email_verified', 'true');
+    localStorage.setItem('seeco_verified_email', email);
     setEmailVerified(true);
   };
 

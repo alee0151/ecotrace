@@ -82,6 +82,155 @@ const Ticks = () => (
   </div>
 );
 
+function UserJourneySection({
+  activeJourney,
+  setActiveJourney,
+}: {
+  activeJourney: 'investor' | 'consumer';
+  setActiveJourney: React.Dispatch<React.SetStateAction<'investor' | 'consumer'>>;
+}) {
+  return (
+    <section id="methodology" className="relative overflow-hidden">
+      <div className="absolute inset-0 opacity-45">
+        <TopoSvg className="w-full h-full text-emerald-800" />
+      </div>
+      <div className="absolute inset-0 opacity-55">
+        <svg className="w-full h-full" preserveAspectRatio="none">
+          <defs>
+            <pattern id="journeyGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+              <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#d6d3d1" strokeWidth="0.7" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#journeyGrid)" />
+        </svg>
+      </div>
+
+      <div className="relative max-w-7xl mx-auto px-6 py-20">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center gap-3 text-[11px] tracking-[0.25em] uppercase text-emerald-700 font-mono mb-5">
+            <span className="w-8 h-px bg-emerald-700/50" />
+            § 02 · How it works
+            <span className="w-8 h-px bg-emerald-700/50" />
+          </div>
+          <h2 className="text-[40px] md:text-[48px] tracking-tight leading-[1.05] text-stone-900">
+            A simple, <span className="italic text-emerald-700 font-light">transparent</span> journey.
+          </h2>
+          <p className="mt-4 text-stone-600 text-[15px] max-w-xl mx-auto mb-10">From question to evidence — tailored whether you're managing AU$4B in assets or buying everyday groceries.</p>
+
+          <div className="flex justify-center">
+            <div className="inline-flex items-center p-1 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm shadow-sm">
+              <button
+                onClick={() => setActiveJourney('investor')}
+                className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
+                  activeJourney === 'investor'
+                    ? 'bg-emerald-700 text-white border border-emerald-700 shadow-sm'
+                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50 border border-transparent'
+                }`}
+              >
+                <Briefcase size={16} />
+                If you want to invest to company
+              </button>
+              <button
+                onClick={() => setActiveJourney('consumer')}
+                className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
+                  activeJourney === 'consumer'
+                    ? 'bg-blue-700 text-white border border-blue-700 shadow-sm'
+                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50 border border-transparent'
+                }`}
+              >
+                <Users size={16} />
+                If you want to see your product impact
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative min-h-[320px]">
+          {activeJourney === 'investor' && (
+            <div className="relative transition-opacity duration-500 opacity-100">
+              <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
+                <line x1="60" y1="10" x2="940" y2="10" stroke="#047857" strokeWidth="1" strokeDasharray="6 8" opacity="0.45" />
+                {[125, 375, 625, 875].map((cx, i) => (
+                  <g key={i}>
+                    <circle cx={cx} cy="10" r="6" fill="#047857" opacity="0.14" />
+                    <circle cx={cx} cy="10" r="2.5" fill="#047857" />
+                  </g>
+                ))}
+              </svg>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 md:gap-5 relative">
+                {investorJourney.map((j, i) => {
+                  const Icon = j.icon;
+                  return (
+                    <div key={j.title} className="relative">
+                      <div className="flex items-center gap-3 mb-5">
+                        <div className="w-12 h-12 rounded-full border border-emerald-700/30 bg-white flex items-center justify-center text-emerald-700 relative z-10 shadow-sm">
+                          <span className="text-[15px] tracking-tight">0{i + 1}</span>
+                        </div>
+                        <div className="flex-1 h-px bg-gradient-to-r from-emerald-700/30 to-transparent" />
+                      </div>
+                      <div className="p-6 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm hover:bg-white transition h-full shadow-sm">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                            <Icon size={16} />
+                          </div>
+                          <div className="font-mono text-[10px] tracking-[0.2em] text-stone-500">{j.subtitle}</div>
+                        </div>
+                        <div className="text-[19px] tracking-tight text-stone-900 mb-1.5">{j.title}</div>
+                        <div className="text-[13px] text-stone-600 leading-relaxed">{j.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {activeJourney === 'consumer' && (
+            <div className="relative transition-opacity duration-500 opacity-100">
+              <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
+                <line x1="60" y1="10" x2="940" y2="10" stroke="#1d4ed8" strokeWidth="1" strokeDasharray="6 8" opacity="0.32" />
+                {[166, 500, 833].map((cx, i) => (
+                  <g key={i}>
+                    <circle cx={cx} cy="10" r="6" fill="#1d4ed8" opacity="0.12" />
+                    <circle cx={cx} cy="10" r="2.5" fill="#1d4ed8" />
+                  </g>
+                ))}
+              </svg>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 relative">
+                {consumerJourney.map((j, i) => {
+                  const Icon = j.icon;
+                  return (
+                    <div key={j.title} className="relative">
+                      <div className="flex items-center gap-3 mb-5">
+                        <div className="w-12 h-12 rounded-full border border-blue-700/25 bg-white flex items-center justify-center text-blue-700 relative z-10 shadow-sm">
+                          <span className="text-[15px] tracking-tight">0{i + 1}</span>
+                        </div>
+                        <div className="flex-1 h-px bg-gradient-to-r from-blue-700/25 to-transparent" />
+                      </div>
+                      <div className="p-6 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm hover:bg-white transition h-full shadow-sm">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
+                            <Icon size={16} />
+                          </div>
+                          <div className="font-mono text-[10px] tracking-[0.2em] text-stone-500">{j.subtitle}</div>
+                        </div>
+                        <div className="text-[19px] tracking-tight text-stone-900 mb-1.5">{j.title}</div>
+                        <div className="text-[13px] text-stone-600 leading-relaxed">{j.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function Landing() {
   const navigate = useNavigate();
   const [activeJourney, setActiveJourney] = useState<'investor' | 'consumer'>('investor');
@@ -99,7 +248,7 @@ export function Landing() {
             <Leaf className="text-white" size={18} />
           </div>
           <div>
-            <div className="text-[15px] font-semibold text-stone-900 leading-tight tracking-tight">ECOTRACE</div>
+            <div className="text-[15px] font-semibold text-stone-900 leading-tight tracking-tight">SEECO</div>
             <div className="text-[10px] text-stone-500 leading-tight tracking-[0.2em] uppercase">Biodiversity Intelligence</div>
           </div>
         </div>
@@ -170,6 +319,8 @@ export function Landing() {
         </div>
       </section>
 
+      <UserJourneySection activeJourney={activeJourney} setActiveJourney={setActiveJourney} />
+
       {/* HERO */}
       <section className="relative overflow-hidden mt-4 mx-4 md:mx-6 rounded-3xl">
         <div className="absolute inset-0">
@@ -197,7 +348,7 @@ export function Landing() {
             <span className="block italic text-emerald-300 font-light">on nature and the environment.</span>
           </h1>
           <p className="mt-6 text-stone-200/90 text-[16px] max-w-xl leading-relaxed">
-            EcoTrace fuses regulatory filings, scientific data, and supply-chain records into a trusted biodiversity risk score. Stop guessing—start tracing the footprint of what you buy and who you back.
+            Seeco fuses regulatory filings, scientific data, and supply-chain records into a trusted biodiversity risk score. Stop guessing—start tracing the footprint of what you buy and who you back.
           </p>
 
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-3xl">
@@ -276,148 +427,6 @@ export function Landing() {
         </div>
       </section>
 
-      {/* USER JOURNEY — aesthetic, connected */}
-      <section id="methodology" className="relative bg-stone-950 text-stone-100 overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.15]">
-          <TopoSvg className="w-full h-full text-emerald-300" />
-        </div>
-        <div className="absolute inset-0 opacity-40">
-          <svg className="w-full h-full" preserveAspectRatio="none">
-            <defs>
-              <pattern id="darkGrid" width="60" height="60" patternUnits="userSpaceOnUse">
-                <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#1c1917" strokeWidth="1" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#darkGrid)" />
-          </svg>
-        </div>
-
-        <div className="relative max-w-7xl mx-auto px-6 py-24">
-          <div className="text-center mb-14">
-            <div className="inline-flex items-center gap-3 text-[11px] tracking-[0.25em] uppercase text-emerald-300/80 font-mono mb-5">
-              <span className="w-8 h-px bg-emerald-400/60" />
-              § 02 · How it works
-              <span className="w-8 h-px bg-emerald-400/60" />
-            </div>
-            <h2 className="text-[40px] md:text-[48px] tracking-tight leading-[1.05] text-white">
-              A simple, <span className="italic text-emerald-300 font-light">transparent</span> journey.
-            </h2>
-            <p className="mt-4 text-stone-300/80 text-[15px] max-w-xl mx-auto mb-10">From question to evidence — tailored whether you're managing AU$4B in assets or buying everyday groceries.</p>
-
-            <div className="flex justify-center">
-              <div className="inline-flex items-center p-1 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-sm shadow-inner">
-                <button 
-                  onClick={() => setActiveJourney('investor')}
-                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
-                    activeJourney === 'investor' 
-                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 shadow-sm' 
-                      : 'text-stone-400 hover:text-stone-200 hover:bg-white/[0.05] border border-transparent'
-                  }`}
-                >
-                  <Briefcase size={16} />
-                  If you want to invest to company
-                </button>
-                <button 
-                  onClick={() => setActiveJourney('consumer')}
-                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
-                    activeJourney === 'consumer' 
-                      ? 'bg-blue-500/15 text-blue-300 border border-blue-500/20 shadow-sm' 
-                      : 'text-stone-400 hover:text-stone-200 hover:bg-white/[0.05] border border-transparent'
-                  }`}
-                >
-                  <Users size={16} />
-                  If you want to see your product impact
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="relative min-h-[320px]">
-            {/* Investor Journey */}
-            {activeJourney === 'investor' && (
-              <div className="relative transition-opacity duration-500 opacity-100">
-                <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
-                  <line x1="60" y1="10" x2="940" y2="10" stroke="#10b981" strokeWidth="1" strokeDasharray="6 8" opacity="0.55" />
-                  {[125, 375, 625, 875].map((cx, i) => (
-                    <g key={i}>
-                      <circle cx={cx} cy="10" r="6" fill="#10b981" opacity="0.2" />
-                      <circle cx={cx} cy="10" r="2.5" fill="#10b981" />
-                    </g>
-                  ))}
-                </svg>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 md:gap-5 relative">
-                  {investorJourney.map((j, i) => {
-                    const Icon = j.icon;
-                    return (
-                      <div key={j.title} className="relative">
-                        <div className="flex items-center gap-3 mb-5">
-                          <div className="w-12 h-12 rounded-full border border-emerald-400/40 bg-stone-950 flex items-center justify-center text-emerald-300 relative z-10">
-                            <span className="text-[15px] tracking-tight">0{i + 1}</span>
-                          </div>
-                          <div className="flex-1 h-px bg-gradient-to-r from-emerald-400/40 to-transparent" />
-                        </div>
-                        <div className="p-6 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur-sm hover:bg-white/[0.06] transition h-full">
-                          <div className="flex items-center gap-2 mb-4">
-                            <div className="w-9 h-9 rounded-lg bg-emerald-400/15 text-emerald-300 flex items-center justify-center">
-                              <Icon size={16} />
-                            </div>
-                            <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400">{j.subtitle}</div>
-                          </div>
-                          <div className="text-[19px] tracking-tight text-white mb-1.5">{j.title}</div>
-                          <div className="text-[13px] text-stone-400 leading-relaxed">{j.text}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Consumer Journey */}
-            {activeJourney === 'consumer' && (
-              <div className="relative transition-opacity duration-500 opacity-100">
-                <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
-                  <line x1="60" y1="10" x2="940" y2="10" stroke="#93c5fd" strokeWidth="1" strokeDasharray="6 8" opacity="0.4" />
-                  {[166, 500, 833].map((cx, i) => (
-                    <g key={i}>
-                      <circle cx={cx} cy="10" r="6" fill="#93c5fd" opacity="0.2" />
-                      <circle cx={cx} cy="10" r="2.5" fill="#93c5fd" />
-                    </g>
-                  ))}
-                </svg>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 relative">
-                  {consumerJourney.map((j, i) => {
-                    const Icon = j.icon;
-                    return (
-                      <div key={j.title} className="relative">
-                        <div className="flex items-center gap-3 mb-5">
-                          <div className="w-12 h-12 rounded-full border border-blue-400/40 bg-stone-950 flex items-center justify-center text-blue-300 relative z-10">
-                            <span className="text-[15px] tracking-tight">0{i + 1}</span>
-                          </div>
-                          <div className="flex-1 h-px bg-gradient-to-r from-blue-400/40 to-transparent" />
-                        </div>
-                        <div className="p-6 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur-sm hover:bg-white/[0.06] transition h-full">
-                          <div className="flex items-center gap-2 mb-4">
-                            <div className="w-9 h-9 rounded-lg bg-blue-400/15 text-blue-300 flex items-center justify-center">
-                              <Icon size={16} />
-                            </div>
-                            <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400">{j.subtitle}</div>
-                          </div>
-                          <div className="text-[19px] tracking-tight text-white mb-1.5">{j.title}</div>
-                          <div className="text-[13px] text-stone-400 leading-relaxed">{j.text}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
       {/* NEWS */}
       <section id="news" className="max-w-7xl mx-auto px-6 py-24">
         <div className="flex items-end justify-between mb-10">
@@ -457,7 +466,7 @@ export function Landing() {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <div className="p-1.5 bg-emerald-700 rounded-md"><Leaf size={14} className="text-white" /></div>
-              <div className="text-stone-900 tracking-tight">EcoTrace</div>
+              <div className="text-stone-900 tracking-tight">Seeco</div>
             </div>
             <div className="text-[12px] text-stone-500 leading-relaxed">Biodiversity risk intelligence for the TNFD era. Built in Australia.</div>
             <div className="mt-3 font-mono text-[10px] tracking-[0.2em] text-stone-400 inline-flex items-center gap-1"><MapPin size={11} /> MELBOURNE · VIC · AU</div>
@@ -477,7 +486,7 @@ export function Landing() {
         </div>
         <div className="border-t border-stone-200">
           <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-3 text-[11px] text-stone-500 font-mono tracking-wider">
-            <div>© 2026 ECOTRACE · ALL RIGHTS RESERVED</div>
+            <div>© 2026 SEECO · ALL RIGHTS RESERVED</div>
             <div className="flex gap-5"><a>PRIVACY</a><a>TERMS</a><a>SECURITY</a></div>
           </div>
         </div>

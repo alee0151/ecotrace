@@ -1,4 +1,4 @@
-Redesign only “Page 02 — Company Overview” for EcoTrace to make it significantly more investor-friendly, more information-dense, and visually more creative, while still preserving the brand’s trustworthy, eco-friendly, premium SaaS aesthetic.
+Redesign only “Page 02 — Company Overview” for Seeco to make it significantly more investor-friendly, more information-dense, and visually more creative, while still preserving the brand’s trustworthy, eco-friendly, premium SaaS aesthetic.
 
 Do NOT redesign the whole product.
 Do NOT change the left sidebar, top search bar, or overall design language.
@@ -182,7 +182,7 @@ Prioritize this order visually:
 5. What an investor should do next
 
 Design constraints:
-- Preserve EcoTrace branding and current design system.
+- Preserve Seeco branding and current design system.
 - Do not make it look like a conceptual dribbble shot.
 - Make it feel production-ready, credible, legible, and premium.
 - Use realistic sample company data and labels.

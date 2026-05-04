@@ -1,8 +1,8 @@
 {
-  "name": "ecotrace-backend",
-  "description": "EcoTrace FastAPI backend",
+  "name": "seeco-backend",
+  "description": "Seeco FastAPI backend",
   "repository": "https://github.com/your-org/your-repo",
-  "keywords": ["fastapi", "biodiversity", "ecotrace"],
+  "keywords": ["fastapi", "biodiversity", "seeco"],
   "env": {
     "DB_HOST": { "required": true },
     "DB_PORT": { "value": "5432" },
@@ -13,7 +13,7 @@
     "CORS_ALLOW_ORIGINS": { "required": true },
     "FRONTEND_BASE_URL": { "required": true },
     "EMAIL_DELIVERY_MODE": { "value": "outbox" },
-    "WARM_IUCN_CACHE_ON_STARTUP": { "value": "false" },
+    "WARM_IUCN_CACHE_ON_STARTUP": { "value": "true" },
     "IUCN_CACHE_MAX_AGE_HOURS": { "value": "168" },
     "MAX_REPORT_UPLOAD_MB": { "value": "25" }
   }

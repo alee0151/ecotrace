@@ -1,10 +1,10 @@
 """
-EcoTrace Backend API
+Seeco Backend API
 ====================
 
 Purpose
 -------
-This backend implements the consumer search pipeline for EcoTrace.
+This backend implements the consumer search pipeline for Seeco.
 
 Consumer flow
 -------------
@@ -176,10 +176,10 @@ load_dotenv(Path(__file__).resolve().with_name(".env"))
 # ============================================================
 
 app = FastAPI(
-    title="EcoTrace Backend API",
+    title="Seeco Backend API",
     version="6.0.0",
     description="""
-EcoTrace consumer search API.
+Seeco consumer search API.
 
 Pipeline modules:
 - abn_pipeline.py     : ABN checksum (ATO mod-89) + ABR lookup / name search
@@ -283,7 +283,7 @@ def get_conn():
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
         port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "ecotrace"),
+        dbname=os.getenv("DB_NAME", "seeco"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD"),
         sslmode=os.getenv("DB_SSLMODE", "require"),
@@ -769,7 +769,7 @@ def persist_inferred_abn_location(cur, row: Dict[str, Any], location: Dict[str, 
             INSERT INTO inferred_location
                 (company_id, source_type, abn_ref, label, address_raw, state, postcode,
                  country, latitude, longitude, confidence, prov_agent)
-            VALUES (%s, 'abn', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'EcoTrace ABN postcode centroid')
+            VALUES (%s, 'abn', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Seeco ABN postcode centroid')
             ON CONFLICT ON CONSTRAINT uq_inferred_location_source DO UPDATE SET
                 label = EXCLUDED.label,
                 address_raw = EXCLUDED.address_raw,
@@ -814,7 +814,7 @@ def persist_inferred_evidence_location(cur, row: Dict[str, Any], location: Dict[
             INSERT INTO inferred_location
                 (company_id, source_type, report_id, label, address_raw, state, postcode,
                  country, latitude, longitude, confidence, prov_agent)
-            VALUES (%s, 'report', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'EcoTrace extracted evidence centroid')
+            VALUES (%s, 'report', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Seeco extracted evidence centroid')
             ON CONFLICT ON CONSTRAINT uq_inferred_location_source DO UPDATE SET
                 report_id = COALESCE(EXCLUDED.report_id, inferred_location.report_id),
                 label = EXCLUDED.label,
@@ -1137,7 +1137,7 @@ def start_spatial_analysis_for_query(query_id: Optional[str], force: bool = Fals
 @app.get("/")
 def root():
     return {
-        "message":       "EcoTrace backend is running",
+        "message":       "Seeco backend is running",
         "main_endpoint": "POST /api/search",
         "consumer_flow": "query_id based, no login required",
         "version":       "6.0.0",
@@ -1194,8 +1194,8 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
     html_body = f"""<!doctype html>
 <html>
 <body style="font-family:Arial,sans-serif;color:#1c1917;line-height:1.5">
-  <h2>Verify your EcoTrace email</h2>
-  <p>Click the button below to unlock your EcoTrace workspace. This link expires in 30 minutes.</p>
+  <h2>Verify your Seeco email</h2>
+  <p>Click the button below to unlock your Seeco workspace. This link expires in 30 minutes.</p>
   <p>
     <a href="{verify_url}" style="display:inline-block;background:#047857;color:white;padding:12px 18px;border-radius:8px;text-decoration:none">
       Verify email
@@ -1220,7 +1220,7 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
             (email,),
         )
         user_id = cur.fetchone()["user_id"]
-        delivery = deliver_report_email(email, "Verify your EcoTrace email", html_body)
+        delivery = deliver_report_email(email, "Verify your Seeco email", html_body)
         cur.execute(
             """
             INSERT INTO email_verification

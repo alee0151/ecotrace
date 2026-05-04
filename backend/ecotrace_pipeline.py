@@ -1,5 +1,5 @@
 """
-EcoTrace Step 3: API + LLM biodiversity evidence pipeline.
+Seeco Step 3: API + LLM biodiversity evidence pipeline.
 
 This module avoids scraping. API clients return article metadata and links; the
 LLM extraction layer only receives provided snippets or explicitly supplied full
@@ -500,7 +500,7 @@ class OpenRouterLLMExtractor:
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "http://localhost"),
-                "X-Title": os.getenv("OPENROUTER_APP_NAME", "EcoTrace"),
+                "X-Title": os.getenv("OPENROUTER_APP_NAME", "Seeco"),
             },
             method="POST",
         )
@@ -610,7 +610,7 @@ class SimpleArticleTextRetriever:
             url,
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 EcoTrace/1.0 "
+                    "Mozilla/5.0 Seeco/1.0 "
                     "(LLM-assisted biodiversity evidence extraction)"
                 )
             },
