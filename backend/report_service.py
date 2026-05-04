@@ -41,6 +41,7 @@ def smtp_settings() -> Dict[str, Any]:
     resend_api_key = os.getenv("RESEND_API_KEY") or ""
     use_resend_defaults = provider == "resend" or bool(resend_api_key and not os.getenv("SMTP_HOST"))
     use_ssl = env_bool("SMTP_USE_SSL", False)
+    use_tls = True if use_resend_defaults and not use_ssl else env_bool("SMTP_USE_TLS", not use_ssl)
 
     return {
         "provider": "resend" if use_resend_defaults else provider,
@@ -56,7 +57,7 @@ def smtp_settings() -> Dict[str, Any]:
         ).strip(),
         "from_name": (os.getenv("REPORT_FROM_NAME") or "EcoTrace").strip(),
         "reply_to": (os.getenv("REPORT_REPLY_TO") or "").strip(),
-        "use_tls": env_bool("SMTP_USE_TLS", not use_ssl),
+        "use_tls": use_tls,
         "use_ssl": use_ssl,
         "require_auth": env_bool("SMTP_REQUIRE_AUTH", use_resend_defaults),
         "timeout": int(os.getenv("SMTP_TIMEOUT_SECONDS", "30")),

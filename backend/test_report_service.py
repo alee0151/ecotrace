@@ -222,6 +222,24 @@ class ReportServiceTests(unittest.TestCase):
         self.assertEqual(settings["password"], "re_test_key")
         self.assertTrue(settings["require_auth"])
 
+    def test_resend_provider_forces_starttls_on_plain_smtp(self):
+        env = {
+            "EMAIL_PROVIDER": "resend",
+            "RESEND_API_KEY": "re_test_key",
+            "REPORT_FROM_EMAIL": "hello@example.com",
+            "SMTP_HOST": "",
+            "SMTP_USERNAME": "",
+            "SMTP_PASSWORD": "",
+            "SMTP_USE_TLS": "false",
+            "SMTP_USE_SSL": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            settings = smtp_settings()
+
+        self.assertEqual(settings["provider"], "resend")
+        self.assertTrue(settings["use_tls"])
+        self.assertFalse(settings["use_ssl"])
+
     def test_resend_provider_requires_api_key(self):
         env = {
             "EMAIL_DELIVERY_MODE": "smtp",
