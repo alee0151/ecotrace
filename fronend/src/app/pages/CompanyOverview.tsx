@@ -734,6 +734,17 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
       setMessage(error instanceof Error ? error.message : 'Could not generate report.');
     }
   };
+  const saveAsPdf = async () => {
+    try {
+      const nextReportId = await ensureReport();
+      if (!nextReportId) return;
+      window.open(reportHtmlUrl(nextReportId, true), '_blank', 'noopener,noreferrer');
+      setMessage('Choose "Save as PDF" in the print dialog.');
+    } catch (error) {
+      setEmailStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not prepare PDF export.');
+    }
+  };
   const emailReport = async () => {
     if (!email.trim()) {
       setEmailStatus('error');
@@ -799,7 +810,8 @@ function ExportModal({ companyName, queryId, analysis, onClose }: { companyName:
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 h-10 rounded-lg border border-stone-200 text-[13px] text-stone-700 hover:bg-stone-50">Cancel</button>
-            <button onClick={openReport} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg bg-stone-900 disabled:bg-stone-400 text-white text-[13px] hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"><Download size={13} /> {emailStatus === 'generating' ? 'Generating' : 'Open report'}</button>
+            <button onClick={openReport} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg border border-stone-200 disabled:bg-stone-100 text-stone-700 text-[13px] hover:bg-stone-50 inline-flex items-center justify-center gap-1.5">Open report</button>
+            <button onClick={saveAsPdf} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg bg-stone-900 disabled:bg-stone-400 text-white text-[13px] hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"><Download size={13} /> {emailStatus === 'generating' ? 'Generating' : 'Save as PDF'}</button>
           </div>
         </div>
       </div>

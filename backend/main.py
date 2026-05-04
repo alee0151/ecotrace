@@ -219,6 +219,7 @@ try:
         create_persisted_report,
         deliver_report_email,
         get_persisted_report,
+        refresh_persisted_report_content,
         render_report_html,
         send_persisted_report,
         valid_email,
@@ -229,6 +230,7 @@ except ImportError:
         create_persisted_report,
         deliver_report_email,
         get_persisted_report,
+        refresh_persisted_report_content,
         render_report_html,
         send_persisted_report,
         valid_email,
@@ -1038,6 +1040,35 @@ def build_layer_a_response(result, context: Optional[Dict[str, Any]] = None) -> 
     return response
 
 
+def refresh_latest_report_with_spatial(query_id: str, spatial_payload: Dict[str, Any]) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT report_id, metadata_json
+            FROM report
+            WHERE query_id = %s
+            ORDER BY generated_at DESC
+            LIMIT 1;
+            """,
+            (query_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        metadata = row.get("metadata_json") if isinstance(row.get("metadata_json"), dict) else {}
+        metadata = {**metadata, "spatial_analysis": spatial_payload}
+        refresh_persisted_report_content(cur, str(row["report_id"]), metadata)
+        conn.commit()
+    except Exception as error:
+        conn.rollback()
+        print(f"[Report] Spatial report refresh skipped: {error}")
+    finally:
+        cur.close()
+        conn.close()
+
+
 def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[str, Any]:
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
@@ -1061,6 +1092,7 @@ def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[s
         payload = build_layer_a_response(result, context)
         with SPATIAL_ANALYSIS_LOCK:
             SPATIAL_ANALYSIS_CACHE[query_id] = payload
+        refresh_latest_report_with_spatial(query_id, payload)
         return payload
     except Exception as error:
         payload = {
@@ -1955,6 +1987,15 @@ def generate_report(payload: GenerateReportRequest):
             saved["report_id"],
             saved.get("metadata_json"),
         )
+        if persisted_locations:
+            saved = refresh_persisted_report_content(
+                cur,
+                saved["report_id"],
+                {
+                    **(saved.get("metadata_json") or {}),
+                    "spatial_analysis": SPATIAL_ANALYSIS_CACHE.get(query_id, {}),
+                },
+            ) or saved
         conn.commit()
         start_spatial_analysis_for_query(query_id, force=True)
         return {

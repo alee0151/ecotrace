@@ -120,6 +120,50 @@ class ReportServiceTests(unittest.TestCase):
         self.assertIn("<!doctype html>", html)
         self.assertIn("Company Snapshot", html)
         self.assertIn("Inferred Spatial Context", html)
+        self.assertIn("window.print()", html)
+
+    def test_render_report_html_includes_layer_a_summary(self):
+        report = {
+            "title": "EcoTrace biodiversity report - BHP GROUP LIMITED",
+            "generated_at": "2026-05-04T10:00:00+00:00",
+            "executive_summary": "Layer A is available.",
+            "key_findings": ["Layer A biodiversity scoring found 1 threatened species."],
+            "summary": {
+                "entity_name": "BHP GROUP LIMITED",
+                "resolution_status": "resolved",
+                "completeness_score": 95,
+                "primary_location": "Pilbara WA",
+                "evidence_location_count": 2,
+                "evidence_count": 5,
+            },
+            "company": {"legal_name": "BHP GROUP LIMITED", "abn": "49004028077"},
+            "brand": {},
+            "product": {},
+            "locations": [],
+            "persisted_news": [],
+            "analysis_evidence": {},
+            "spatial_analysis": {
+                "status": "success",
+                "total_ala_records": 15053,
+                "threatened_species_count": 1,
+                "species_threat_score": 81.91,
+                "threatened_species": [
+                    {
+                        "scientific_name": "Stylidium fluminense",
+                        "common_name": None,
+                        "iucn_category": "CR",
+                        "record_count": 4,
+                    }
+                ],
+            },
+            "limitations": [],
+        }
+
+        html = render_report_html(report)
+
+        self.assertIn("Layer A Threatened Species", html)
+        self.assertIn("81.9/100", html)
+        self.assertIn("Stylidium fluminense", html)
 
     def test_email_without_smtp_writes_outbox_file(self):
         with tempfile.TemporaryDirectory() as tmp:

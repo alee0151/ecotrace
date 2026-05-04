@@ -438,8 +438,8 @@ export const generateReport = (queryId: string, analysisPayload?: unknown) =>
 export const getReport = (reportId: string) =>
   get<QueryReportResponse>(`/api/report/${encodeURIComponent(reportId)}`);
 
-export const reportHtmlUrl = (reportId: string) =>
-  apiUrl(`/api/report/${encodeURIComponent(reportId)}/html`);
+export const reportHtmlUrl = (reportId: string, print = false) =>
+  apiUrl(`/api/report/${encodeURIComponent(reportId)}/html${print ? '?print=1' : ''}`);
 
 export const queryReportHtmlUrl = (queryId: string) =>
   apiUrl(`/api/report/query/${encodeURIComponent(queryId)}/html`);

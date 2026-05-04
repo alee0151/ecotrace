@@ -78,6 +78,17 @@ def _percent(value: Any) -> str:
     return f"{round(number)}%"
 
 
+def _display_datetime(value: Any) -> str:
+    if not value:
+        return "Not available"
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.strftime("%d %b %Y, %H:%M UTC")
+    except ValueError:
+        return text
+
+
 def _fetch_all(cur, query: str, params: Iterable[Any]) -> List[Dict[str, Any]]:
     cur.execute(query, tuple(params))
     return [dict(row) for row in cur.fetchall()]
@@ -133,6 +144,18 @@ def _analysis_candidates(analysis_payload: Optional[Dict[str, Any]]) -> List[Dic
     return [candidate for candidate in candidates if isinstance(candidate, dict)]
 
 
+def _analysis_layer_a(analysis_payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(analysis_payload, dict):
+        return {}
+    layer_a = analysis_payload.get("spatial_analysis") or analysis_payload.get("layer_a")
+    if isinstance(layer_a, dict):
+        return layer_a
+    nested = analysis_payload.get("metadata_json")
+    if isinstance(nested, dict):
+        return _analysis_layer_a(nested)
+    return {}
+
+
 def build_query_report(
     cur,
     query_id: str,
@@ -186,7 +209,16 @@ def build_query_report(
                    confidence, source_type, extracted_at
             FROM inferred_location
             WHERE company_id = %s
-            ORDER BY extracted_at DESC
+            ORDER BY
+                CASE source_type WHEN 'report' THEN 1 WHEN 'news' THEN 2 WHEN 'abn' THEN 3 ELSE 4 END,
+                CASE
+                    WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%pilbara%%' THEN 1
+                    WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%olympic dam%%' THEN 1
+                    WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%port hedland%%' THEN 1
+                    WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%bowen basin%%' THEN 1
+                    ELSE 2
+                END,
+                extracted_at DESC
             LIMIT 10;
             """,
             (company_id,),
@@ -222,6 +254,7 @@ def build_query_report(
     report_evidence = _analysis_records(analysis_payload, "reports")
     news_evidence = _analysis_records(analysis_payload, "news")
     news_candidates = _analysis_candidates(analysis_payload)
+    layer_a = _analysis_layer_a(analysis_payload)
 
     completeness = 35
     if base.get("resolved_company_id"):
@@ -236,9 +269,36 @@ def build_query_report(
         completeness += 5
 
     evidence_count = len(report_evidence) + len(news_evidence) + len(news)
+    primary_location = locations[0] if locations else {}
+    extracted_locations = [
+        location for location in locations
+        if location.get("source_type") in ("report", "news")
+    ]
+    location_label = primary_location.get("label") or "No operating location inferred"
+    report_sources = sorted(
+        {
+            str(item.get("source"))
+            for item in report_evidence
+            if item.get("source")
+        }
+    )
+    key_findings = [
+        f"Primary biodiversity context is {location_label}.",
+        f"{len(report_evidence)} uploaded-report evidence signal(s) and {len(news_evidence)} news evidence signal(s) were extracted.",
+        f"{len(extracted_locations)} operating or evidence-derived location(s) are available for spatial assessment.",
+    ]
+    if report_sources:
+        key_findings.append(f"Uploaded evidence source reviewed: {', '.join(report_sources[:3])}.")
+    if layer_a.get("status") == "success":
+        key_findings.append(
+            "Layer A biodiversity scoring found "
+            f"{layer_a.get('threatened_species_count', 0)} threatened species "
+            f"and a species threat score of {float(layer_a.get('species_threat_score') or 0):.1f}/100."
+        )
     summary_text = (
-        f"{display_name} is resolved from {base.get('input_type')} input "
-        f"with {evidence_count} persisted or extracted evidence record(s) available."
+        f"{display_name} was resolved from {base.get('input_type')} input. "
+        f"EcoTrace found {evidence_count} persisted or extracted evidence record(s), "
+        f"with {location_label} used as the primary spatial context when available."
     )
 
     return _serializable(
@@ -247,6 +307,7 @@ def build_query_report(
             "generated_at": generated_at,
             "title": f"EcoTrace biodiversity report - {display_name}",
             "executive_summary": summary_text,
+            "key_findings": key_findings,
             "summary": {
                 "entity_name": display_name,
                 "input_type": base.get("input_type"),
@@ -257,6 +318,8 @@ def build_query_report(
                 "evidence_count": evidence_count,
                 "news_candidate_count": len(news_candidates),
                 "report_evidence_count": len(report_evidence),
+                "primary_location": location_label,
+                "evidence_location_count": len(extracted_locations),
             },
             "company": {
                 "company_id": str(base["resolved_company_id"])
@@ -286,6 +349,7 @@ def build_query_report(
             },
             "locations": locations,
             "persisted_news": news,
+            "spatial_analysis": layer_a,
             "analysis_evidence": {
                 "news": news_evidence,
                 "reports": report_evidence,
@@ -313,6 +377,10 @@ def render_report_html(report: Dict[str, Any]) -> str:
     news_records = analysis.get("news") or []
     news_candidates = analysis.get("news_candidates") or []
     limitations = report.get("limitations") or []
+    key_findings = report.get("key_findings") or []
+    primary_location = summary.get("primary_location") or "Not available"
+    layer_a = report.get("spatial_analysis") or {}
+    threatened_species = layer_a.get("threatened_species") or []
 
     def card(label: str, value: Any) -> str:
         return (
@@ -322,13 +390,20 @@ def render_report_html(report: Dict[str, Any]) -> str:
             "</div>"
         )
 
+    def source_cell(item: Dict[str, Any]) -> str:
+        label = html.escape(_string(item.get("source") or item.get("publisher")))
+        url = item.get("source_url") or item.get("url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return f"<a href='{html.escape(url, quote=True)}'>{label}</a>"
+        return label
+
     def evidence_rows(records: List[Dict[str, Any]], fallback: str) -> str:
         rows = "".join(
             "<tr>"
             f"<td>{html.escape(_string(item.get('biodiversity_signal') or item.get('headline') or item.get('title')))}</td>"
             f"<td>{html.escape(_string(item.get('evidence_type') or item.get('source_type')))}</td>"
             f"<td>{html.escape(_string(item.get('location')))}</td>"
-            f"<td>{html.escape(_string(item.get('source') or item.get('publisher')))}</td>"
+            f"<td>{source_cell(item)}</td>"
             f"<td>{html.escape(_percent(item.get('confidence') or item.get('llm_confidence')))}</td>"
             "</tr>"
             for item in records
@@ -357,6 +432,19 @@ def render_report_html(report: Dict[str, Any]) -> str:
     limitation_items = "".join(
         f"<li>{html.escape(_string(item))}</li>" for item in limitations
     )
+    key_finding_items = "".join(
+        f"<li>{html.escape(_string(item))}</li>" for item in key_findings
+    )
+    threat_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(_string(item.get('scientific_name')))}</td>"
+        f"<td>{html.escape(_string(item.get('common_name')))}</td>"
+        f"<td>{html.escape(_string(item.get('iucn_category')))}</td>"
+        f"<td>{html.escape(_string(item.get('record_count')))}</td>"
+        "</tr>"
+        for item in threatened_species[:10]
+        if isinstance(item, dict)
+    ) or "<tr><td colspan='4'>No threatened species returned by Layer A.</td></tr>"
 
     return f"""<!doctype html>
 <html>
@@ -378,19 +466,30 @@ def render_report_html(report: Dict[str, Any]) -> str:
     table {{ width: 100%; border-collapse: collapse; background: white; border: 1px solid #e7e5e4; }}
     th, td {{ text-align: left; border-bottom: 1px solid #e7e5e4; padding: 10px; font-size: 13px; vertical-align: top; }}
     th {{ background: #ecfdf5; color: #065f46; font-size: 11px; text-transform: uppercase; }}
+    a {{ color: #047857; }}
     ul {{ background: white; border: 1px solid #e7e5e4; border-radius: 8px; padding: 14px 18px 14px 32px; }}
     @media print {{ body {{ background: white; }} main {{ padding: 0; }} }}
   </style>
+  <script>
+    window.addEventListener('load', function () {{
+      if (new URLSearchParams(window.location.search).get('print') === '1') {{
+        setTimeout(function () {{ window.print(); }}, 300);
+      }}
+    }});
+  </script>
 </head>
 <body>
   <main>
     <header>
       <div class="muted">EcoTrace investor biodiversity dossier</div>
       <h1>{title}</h1>
-      <div class="muted">Generated {html.escape(_string(report.get("generated_at")))}</div>
+      <div class="muted">Generated {html.escape(_display_datetime(report.get("generated_at")))}</div>
     </header>
 
     <div class="summary">{html.escape(_string(report.get("executive_summary")))}</div>
+
+    <h2>Key Findings</h2>
+    <ul>{key_finding_items}</ul>
 
     <section class="grid">
       {card("Entity", summary.get("entity_name"))}
@@ -400,6 +499,25 @@ def render_report_html(report: Dict[str, Any]) -> str:
       {card("Brand", brand.get("brand_name"))}
       {card("Product", product.get("product_name"))}
     </section>
+
+    <h2>Biodiversity Impact Summary</h2>
+    <section class="grid">
+      {card("Primary spatial context", primary_location)}
+      {card("Evidence locations", summary.get("evidence_location_count"))}
+      {card("Evidence records", summary.get("evidence_count"))}
+    </section>
+
+    <section class="grid">
+      {card("Species threat score", f"{float(layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending")}
+      {card("ALA occurrence records", layer_a.get("total_ala_records") if layer_a.get("status") == "success" else "Pending")}
+      {card("Threatened species", layer_a.get("threatened_species_count") if layer_a.get("status") == "success" else "Pending")}
+    </section>
+
+    <h2>Layer A Threatened Species</h2>
+    <table>
+      <thead><tr><th>Scientific name</th><th>Common name</th><th>IUCN category</th><th>ALA records</th></tr></thead>
+      <tbody>{threat_rows}</tbody>
+    </table>
 
     <h2>Company Snapshot</h2>
     <section class="grid">
@@ -457,6 +575,41 @@ def create_persisted_report(
                   sent_at, recipient_email, delivery_method;
         """,
         (query_id, report["title"], html_content, Json(report)),
+    )
+    saved = dict(cur.fetchone())
+    saved["metadata_json"] = report
+    return _serializable(saved)
+
+
+def refresh_persisted_report_content(
+    cur,
+    report_id: str,
+    analysis_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    existing = get_persisted_report(cur, report_id)
+    if not existing:
+        return {}
+
+    payload = analysis_payload
+    if payload is None and isinstance(existing.get("metadata_json"), dict):
+        payload = existing["metadata_json"]
+
+    report = build_query_report(cur, existing["query_id"], payload)
+    if not report:
+        return {}
+
+    html_content = render_report_html(report)
+    cur.execute(
+        """
+        UPDATE report
+        SET title = %s,
+            html_content = %s,
+            metadata_json = %s
+        WHERE report_id = %s
+        RETURNING report_id, query_id, title, format, status, generated_at,
+                  sent_at, recipient_email, delivery_method;
+        """,
+        (report["title"], html_content, Json(report), report_id),
     )
     saved = dict(cur.fetchone())
     saved["metadata_json"] = report

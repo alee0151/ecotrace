@@ -1,0 +1,20 @@
+{
+  "name": "ecotrace-backend",
+  "description": "EcoTrace FastAPI backend",
+  "repository": "https://github.com/your-org/your-repo",
+  "keywords": ["fastapi", "biodiversity", "ecotrace"],
+  "env": {
+    "DB_HOST": { "required": true },
+    "DB_PORT": { "value": "5432" },
+    "DB_NAME": { "value": "postgres" },
+    "DB_USER": { "required": true },
+    "DB_PASSWORD": { "required": true },
+    "DB_SSLMODE": { "value": "require" },
+    "CORS_ALLOW_ORIGINS": { "required": true },
+    "FRONTEND_BASE_URL": { "required": true },
+    "EMAIL_DELIVERY_MODE": { "value": "outbox" },
+    "WARM_IUCN_CACHE_ON_STARTUP": { "value": "false" },
+    "IUCN_CACHE_MAX_AGE_HOURS": { "value": "168" },
+    "MAX_REPORT_UPLOAD_MB": { "value": "25" }
+  }
+}
