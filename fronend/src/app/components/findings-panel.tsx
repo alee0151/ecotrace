@@ -150,7 +150,7 @@ export function FindingsPanel({
           <div>
             <div className="flex items-center gap-1.5 text-[12px] text-stone-500">
               Species Threat Score
-              <InfoTip text="0-100 weighted score calculated from IUCN category and local occurrence counts." />
+              <InfoTip text="0-100 score based on the proportion and severity of threatened IUCN-assessed species. Occurrence volume is capped as a context signal." />
             </div>
             <div className="mt-1 text-[34px] leading-tight tracking-tight text-stone-900">
               {loading && !layerA ? "..." : score.toFixed(1)}

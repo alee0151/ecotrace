@@ -4,7 +4,6 @@ import { Root } from "./Root";
 import { ConsumerSearch } from "./pages/ConsumerSearch";
 import { CompanyOverview } from "./pages/CompanyOverview";
 import { Analyse } from "./pages/Analyse";
-import { KnowledgeGraph } from "./pages/KnowledgeGraph";
 import { Watchlist } from "./pages/Watchlist";
 import { SpatialAnalysisPage } from "./pages/spatial-analysis";
 import { VerifyEmail } from "./pages/VerifyEmail";
@@ -21,7 +20,7 @@ export const router = createBrowserRouter([
       { path: "search", Component: ConsumerSearch },
       { path: "overview", Component: CompanyOverview },
       { path: "analyse", Component: Analyse },
-      { path: "knowledge", Component: KnowledgeGraph },
+      { path: "knowledge", element: <Navigate to="/app/analyse" replace /> },
       { path: "watchlist", Component: Watchlist },
       { path: "spatial", Component: SpatialAnalysisPage },
       { path: "verify-email", Component: VerifyEmail },

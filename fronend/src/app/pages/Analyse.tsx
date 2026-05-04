@@ -1,5 +1,11 @@
 import { useMemo } from 'react';
-import { Bird, Droplets, ExternalLink, FileText, Trees } from 'lucide-react';
+import {
+  Bird,
+  Droplets,
+  ExternalLink,
+  FileText,
+  Trees,
+} from 'lucide-react';
 import { Card, Chip, Confidence, SectionTitle } from '../components/shared';
 import { analysisEvidenceCards, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
 
@@ -10,6 +16,19 @@ const fallbackEvidence = [
   { id: 'e4', type: 'News', title: 'Traditional Owners raise concern over cultural site', date: '10 Feb 2026', conf: 72, source: 'ABC News' },
 ];
 
+const fallbackTimeline = [
+  { date: '14 Apr 2026', title: 'Expansion referral lodged', source: 'EPBC Act', conf: 95 },
+  { date: '02 Apr 2026', title: 'Restoration milestone claim', source: 'BHP Sustainability Report', conf: 88 },
+  { date: '21 Mar 2026', title: 'Turbidity breach observation', source: 'WA EPA audit', conf: 82 },
+  { date: '02 Mar 2026', title: 'Species survey finding', source: 'CSIRO', conf: 78 },
+];
+
+const fallbackTraceability = [
+  { claim: 'Operates near Bilby habitat', chain: ['EPBC filing 2025/09421', 'CSIRO survey'], conf: 92 },
+  { claim: 'Tailings within 1km of creek', chain: ['WA EPA audit', 'Satellite imagery 22-03'], conf: 86 },
+  { claim: 'Habitat restoration 142ha', chain: ['BHP Sustainability Report'], conf: 74 },
+];
+
 export function Analyse() {
   const analysis = useMemo(() => loadCompanyAnalysis(), []);
   const backendEvidence = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
@@ -17,6 +36,21 @@ export function Analyse() {
   const companyName = companyDisplayName(analysis);
   const reportSignals = analysis?.reports?.evidence_count ?? 0;
   const newsSignals = analysis?.news?.evidence?.length ?? 0;
+  const timeline = backendEvidence.length
+    ? backendEvidence.map(item => ({
+        date: item.date,
+        title: item.title,
+        source: item.source,
+        conf: item.conf,
+      }))
+    : fallbackTimeline;
+  const traceability = backendEvidence.length
+    ? backendEvidence.slice(0, 3).map(item => ({
+        claim: item.title,
+        chain: [item.source, item.type].filter(Boolean),
+        conf: item.conf,
+      }))
+    : fallbackTraceability;
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4]">
@@ -52,8 +86,53 @@ export function Analyse() {
           </Card>
         </div>
 
+        <div className="grid grid-cols-12 gap-5 mt-6">
+          <Card className="col-span-12 md:col-span-7 p-6">
+            <SectionTitle title="Evidence timeline" />
+            <div className="relative pl-5">
+              <div className="absolute left-1.5 top-1 bottom-1 w-px bg-stone-200" />
+              {timeline.map((item, index) => (
+                <div key={`${item.title}-${index}`} className="relative mb-5 last:mb-0">
+                  <div className="absolute -left-[13px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-white" />
+                  <div className="text-[11px] text-stone-500">{item.date}</div>
+                  <div className="text-[13px] text-stone-900">{item.title}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Chip tone="blue">{item.source}</Chip>
+                    <Confidence value={item.conf} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="col-span-12 md:col-span-5 p-6">
+            <SectionTitle title="Claim → source traceability" />
+            <div className="space-y-3">
+              {traceability.map((item, index) => (
+                <div key={`${item.claim}-${index}`} className="p-3 bg-stone-50 rounded-xl">
+                  <div className="text-[13px] text-stone-900">{item.claim}</div>
+                  <div className="mt-1.5 text-[11px] text-stone-500 flex flex-wrap gap-1 items-center">
+                    {item.chain.map((source, chainIndex) => (
+                      <span key={`${source}-${chainIndex}`} className="inline-flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 bg-white border border-stone-200 rounded">{source}</span>
+                        {chainIndex < item.chain.length - 1 && <span>→</span>}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <Confidence value={item.conf} />
+                    <a className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1 cursor-pointer">
+                      Audit trail <ExternalLink size={10} />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
         <div className="mt-6">
-          <SectionTitle title="Claim-linked evidence" action={<button className="text-[11px] text-emerald-700 hover:underline">Open provenance graph</button>} />
+          <SectionTitle title="Claim-linked evidence" />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {displayEvidence.map(e => (
               <Card key={e.id} className="p-4">

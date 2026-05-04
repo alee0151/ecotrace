@@ -100,7 +100,7 @@ export function SpatialAnalysisPage() {
     setError(null);
 
     const request = queryId
-      ? getSpatialAnalysisForQuery(queryId)
+      ? getSpatialAnalysisForQuery(queryId, refreshIndex > 0)
       : getSpatialLayerA({
           lat: site.lat,
           lon: site.lon,
@@ -178,9 +178,9 @@ export function SpatialAnalysisPage() {
         <Stat
           label="Species Threat Score"
           value={loading && !layerA ? "..." : `${(layerA?.species_threat_score ?? 0).toFixed(1)}`}
-          delta="Weighted 0-100 Layer A score"
+          delta="Proportional 0-100 Layer A score"
           tone={scoreTone(layerA?.species_threat_score)}
-          hint="IUCN category x occurrence count"
+          hint="Threatened species proportion + severity"
         />
         <Stat
           label="Analysis Radius"

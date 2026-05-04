@@ -11,6 +11,7 @@ import time
 import json
 import os
 import threading
+import math
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from dataclasses import dataclass, field
@@ -60,6 +61,60 @@ class LayerAResult:
     threatened_species: list[SpeciesRecord] = field(default_factory=list)
     species_threat_score: float = 0.0
     score_breakdown: dict = field(default_factory=dict)
+
+
+def calculate_species_threat_score(species: list[SpeciesRecord]) -> float:
+    """
+    Calculate a 0-100 Layer A species threat score.
+
+    The score is intentionally proportional to IUCN-assessed species, not raw
+    ALA occurrence volume. A site with a small number of threatened species
+    should not become "Critical" just because occurrence records are numerous.
+    """
+    assessed = [s for s in species if s.iucn_category]
+    assessed_count = len(assessed)
+    if assessed_count == 0:
+        return 0.0
+
+    threatened = [s for s in assessed if s.iucn_category in ("CR", "EN", "VU")]
+    if not threatened:
+        return 0.0
+
+    threatened_count = len(threatened)
+    threatened_ratio = threatened_count / assessed_count
+    weighted_threat = sum(THREAT_WEIGHTS.get(s.iucn_category or "", 0.0) for s in threatened)
+    weighted_threat_ratio = weighted_threat / assessed_count
+
+    # Presence captures how much of the assessed local community is threatened.
+    presence_component = math.sqrt(threatened_ratio) * 45
+
+    # Severity rewards CR/EN/VU composition without letting a few species max out.
+    severity_component = weighted_threat_ratio * 70
+
+    # Small extra signal for genuinely severe categories.
+    critical_endangered_bonus = min(
+        15.0,
+        sum(6.0 for s in threatened if s.iucn_category == "CR")
+        + sum(3.0 for s in threatened if s.iucn_category == "EN"),
+    )
+
+    # Occurrence volume is only confidence/context and is capped tightly.
+    occurrence_context = min(
+        5.0,
+        (
+            sum(math.log1p(max(0, s.record_count)) for s in threatened)
+            / max(1, threatened_count)
+            / math.log(101)
+        ) * 5,
+    )
+
+    score = (
+        presence_component
+        + severity_component
+        + critical_endangered_bonus
+        + occurrence_context
+    )
+    return round(min(100.0, score), 2)
 
 # ── IUCN CATEGORY LOOKUP ───────────────────────────────────────────────────────
 IUCN_CATEGORY_NAMES = {
@@ -391,13 +446,7 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     threatened.sort(key=lambda x: x.threat_weight, reverse=True)
 
     # ── Step 5: Calculate species threat score (0–100) ────────────────────────
-    # Formula: sum of (weight × log(record_count+1)) normalised to 0–100
-    raw_score = sum(
-        s.threat_weight * (1 + s.record_count * 0.1)
-        for s in enriched if s.iucn_category
-    )
-    # Normalise: cap at 100, sigmoid-like scaling
-    normalised = min(100.0, round((raw_score / (raw_score + 10)) * 100, 2)) if raw_score > 0 else 0.0
+    normalised = calculate_species_threat_score(enriched)
 
     # Breakdown by category
     breakdown = {}
