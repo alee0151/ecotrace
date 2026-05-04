@@ -1,0 +1,53 @@
+name: Deploy Frontend - Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "fronend/**"
+      - ".github/workflows/deploy-frontend-app-service.yml"
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "22.x"
+  PACKAGE_PATH: frontend-package
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: fronend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: fronend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: fronend
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - name: Build deployment package
+        run: |
+          mkdir -p "${PACKAGE_PATH}"
+          cp -R fronend/dist "${PACKAGE_PATH}/dist"
+          cp fronend/server.js "${PACKAGE_PATH}/server.js"
+          cp fronend/package.json "${PACKAGE_PATH}/package.json"
+
+      - name: Deploy frontend to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_FRONTEND_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_FRONTEND_PUBLISH_PROFILE }}
+          package: ${{ env.PACKAGE_PATH }}

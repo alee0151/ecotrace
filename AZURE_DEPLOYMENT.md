@@ -2,7 +2,7 @@
 
 This repo deploys as two separate Azure resources:
 
-- Frontend: Azure Static Web Apps from `fronend`
+- Frontend: Azure App Service for Linux/Node from `fronend`
 - Backend: Azure App Service for Linux/Python from `backend`
 - Database: Azure Database for PostgreSQL, configured through backend app settings
 
@@ -10,9 +10,9 @@ Note: the frontend folder is currently named `fronend`, so the workflow paths us
 
 ## Files Added
 
-- `.github/workflows/deploy-frontend-static-web-app.yml`
+- `.github/workflows/deploy-frontend-app-service.yml`
 - `.github/workflows/deploy-backend-app-service.yml`
-- `fronend/staticwebapp.config.json`
+- `fronend/server.js`
 - `fronend/.env.production.example`
 - `backend/azure-app-settings.example.env`
 - `startup.sh`
@@ -23,7 +23,10 @@ Note: the frontend folder is currently named `fronend`, so the workflow paths us
 
 Create these in the same resource group:
 
-1. Azure Static Web App for the frontend.
+1. Azure App Service for the frontend.
+   - Publish: Code
+   - Runtime stack: Node 22 LTS
+   - OS: Linux
 2. Azure App Service for the backend.
    - Publish: Code
    - Runtime stack: Python 3.12
@@ -57,8 +60,8 @@ Important values:
 ```env
 SCM_DO_BUILD_DURING_DEPLOYMENT=true
 ENABLE_ORYX_BUILD=true
-CORS_ALLOW_ORIGINS=https://<your-static-web-app>.azurestaticapps.net
-FRONTEND_BASE_URL=https://<your-static-web-app>.azurestaticapps.net
+CORS_ALLOW_ORIGINS=https://seeco-frontend-h9hxagc8hvhffegt.australiaeast-01.azurewebsites.net
+FRONTEND_BASE_URL=https://<your-frontend-app>.azurewebsites.net
 ```
 
 For Resend email delivery:
@@ -88,34 +91,42 @@ Add this repository variable:
 
 ```text
 AZURE_BACKEND_WEBAPP_NAME=<your-backend-app-service-name>
+AZURE_FRONTEND_WEBAPP_NAME=<your-frontend-app-service-name>
 ```
 
 Add these repository secrets:
 
 ```text
 AZURE_BACKEND_PUBLISH_PROFILE=<contents of backend App Service publish profile>
-AZURE_STATIC_WEB_APPS_API_TOKEN=<frontend Static Web App deployment token>
+AZURE_FRONTEND_PUBLISH_PROFILE=<contents of frontend App Service publish profile>
 VITE_API_BASE_URL=https://<your-backend-app>.azurewebsites.net
 ```
 
 Where to get them:
 
 - Backend publish profile: Azure App Service > Overview > Download publish profile.
-- Static Web Apps token: Azure Static Web App > Manage deployment token.
+- Frontend publish profile: frontend App Service > Overview > Download publish profile.
 
-For publish-profile deployment, Azure App Service basic authentication must be enabled. If the publish profile download is unavailable for a Linux app, add `WEBSITE_WEBDEPLOY_USE_SCM=true` in the backend App Service environment variables, save, then retry the download.
+For publish-profile deployment, Azure App Service basic authentication must be enabled. If the publish profile download is unavailable for a Linux app, add `WEBSITE_WEBDEPLOY_USE_SCM=true` in the App Service environment variables, save, then retry the download.
 
-## 4. Configure Frontend Static Web App
+## 4. Configure Frontend App Service
 
-If you connect Azure Static Web Apps through the portal, choose:
+In Azure Portal, open the frontend App Service, then set:
 
-```text
-App location: fronend
-API location: <blank>
-Output location: dist
+Settings > Configuration > General settings > Startup Command:
+
+```bash
+npm start
 ```
 
-This repo's GitHub workflow builds the app first, copies `staticwebapp.config.json` into `dist`, then deploys `fronend/dist` with `skip_app_build: true`.
+Settings > Environment variables:
+
+```text
+SCM_DO_BUILD_DURING_DEPLOYMENT=false
+WEBSITE_NODE_DEFAULT_VERSION=~22
+```
+
+The frontend workflow builds the Vite app in GitHub Actions, then deploys only `dist`, `server.js`, and `package.json` to the frontend App Service. `fronend/server.js` serves static assets and falls back to `index.html` for React Router routes.
 
 The frontend build needs:
 
@@ -129,6 +140,9 @@ Commit and push the deployment files to `main`:
 
 ```bash
 git add .github/workflows AZURE_DEPLOYMENT.md backend/azure-app-settings.example.env fronend/.env.production.example
+git add .gitignore fronend/package.json fronend/server.js
+git rm .github/workflows/deploy-frontend-static-web-app.yml fronend/staticwebapp.config.json
+git rm --cached .DS_Store fronend/.DS_Store
 git commit -m "Add Azure deployment workflows"
 git push origin main
 ```
@@ -136,7 +150,7 @@ git push origin main
 After the push:
 
 1. GitHub Actions runs `Deploy Backend - Azure App Service` when backend files change.
-2. GitHub Actions runs `Deploy Frontend - Azure Static Web Apps` when frontend files change.
+2. GitHub Actions runs `Deploy Frontend - Azure App Service` when frontend files change.
 3. You can also run either workflow manually from GitHub Actions > workflow > Run workflow.
 
 ## 6. Verify Deployment
@@ -150,7 +164,7 @@ https://<your-backend-app>.azurewebsites.net/health
 Frontend:
 
 ```text
-https://<your-static-web-app>.azurestaticapps.net
+https://<your-frontend-app>.azurewebsites.net
 ```
 
 If the frontend loads but API calls fail, check:
