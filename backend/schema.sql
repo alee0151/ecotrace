@@ -32,6 +32,21 @@ CREATE TABLE "user" (
     created_at  TIMESTAMP       NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE email_verification (
+    verification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID REFERENCES "user"(user_id) ON DELETE CASCADE,
+    email           VARCHAR(255) NOT NULL,
+    token_hash      CHAR(64) NOT NULL UNIQUE,
+    return_to       TEXT NOT NULL DEFAULT '/app/search',
+    requested_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMP NOT NULL,
+    verified_at     TIMESTAMP,
+    delivery_method VARCHAR(50)
+);
+
+CREATE INDEX idx_email_verification_email
+    ON email_verification(email, requested_at DESC);
+
 -- ------------------------------------------------------------
 -- 2. ABN_RECORD  (no FK deps — must exist before COMPANY)
 -- ------------------------------------------------------------
@@ -233,3 +248,26 @@ CREATE INDEX idx_inferred_loc_state_postcode ON inferred_location(state, postcod
 CREATE INDEX idx_inferred_loc_valid         ON inferred_location(valid_from, valid_to);
 -- Optional PostGIS spatial index:
 -- CREATE INDEX idx_inferred_loc_geom ON inferred_location USING GIST(ST_MakePoint(longitude, latitude));
+
+
+-- ------------------------------------------------------------
+-- 12. REPORT
+-- Persisted printable reports generated from search_query.
+-- ------------------------------------------------------------
+CREATE TABLE report (
+    report_id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_id         UUID        NOT NULL REFERENCES search_query(query_id) ON DELETE CASCADE,
+    recipient_email  VARCHAR(255),
+    title            VARCHAR(500) NOT NULL,
+    format           VARCHAR(20)  NOT NULL DEFAULT 'html',
+    status           VARCHAR(30)  NOT NULL DEFAULT 'generated',
+    html_content     TEXT         NOT NULL,
+    metadata_json    JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    generated_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    sent_at          TIMESTAMP,
+    delivery_method  VARCHAR(30)
+);
+
+CREATE INDEX idx_report_query_id     ON report(query_id);
+CREATE INDEX idx_report_generated_at ON report(generated_at);
+CREATE INDEX idx_report_status       ON report(status);

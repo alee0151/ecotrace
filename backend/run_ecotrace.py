@@ -21,21 +21,38 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ecotrace_pipeline import (
-    ArticleMetadata,
-    ExtractionInput,
-    SimpleArticleTextRetriever,
-    UploadedReportTextReader,
-    australia_relevance_score,
-    build_location_options,
-    combine_confidence,
-    create_llm_extractor_from_env,
-    evidence_context,
-    is_australia_linked,
-    load_env_file,
-    quality_gate_record,
-    source_weight,
-)
+try:
+    from .ecotrace_pipeline import (
+        ArticleMetadata,
+        ExtractionInput,
+        SimpleArticleTextRetriever,
+        UploadedReportTextReader,
+        australia_relevance_score,
+        build_location_options,
+        combine_confidence,
+        create_llm_extractor_from_env,
+        evidence_context,
+        is_australia_linked,
+        load_env_file,
+        quality_gate_record,
+        source_weight,
+    )
+except ImportError:
+    from ecotrace_pipeline import (
+        ArticleMetadata,
+        ExtractionInput,
+        SimpleArticleTextRetriever,
+        UploadedReportTextReader,
+        australia_relevance_score,
+        build_location_options,
+        combine_confidence,
+        create_llm_extractor_from_env,
+        evidence_context,
+        is_australia_linked,
+        load_env_file,
+        quality_gate_record,
+        source_weight,
+    )
 
 
 CONFIG_PATH = os.getenv(

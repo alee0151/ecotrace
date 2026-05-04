@@ -41,6 +41,15 @@ export function SpatialAnalysisPage() {
     const inferred = data.inferred_location ?? (data.location && "label" in data.location ? data.location : null);
     const company = data.company;
     if (!inferred || !company) return null;
+    const evidenceDerived = [
+      "report_or_news_evidence",
+      "inferred_location_report",
+      "inferred_location_news",
+    ].includes(inferred.source || "");
+    const sourceLabel = evidenceDerived ? "Source: Extracted evidence" : "Source: ABN Registration";
+    const sectorLabel = evidenceDerived
+      ? `Evidence location - ${inferred.state || "AU"}`
+      : company.state ? `Registered address - ${company.state}` : "Registered address";
 
     return {
       id: data.query?.query_id || data.query_id || "resolved-query",
@@ -50,12 +59,12 @@ export function SpatialAnalysisPage() {
       radiusKm: inferred.radius_km,
       company: company.legal_name || data.query?.input_value || "Resolved company",
       ticker: company.entity_type || "ABR",
-      sector: company.state ? `Registered address · ${company.state}` : "Registered address",
+      sector: sectorLabel,
       abn: company.abn || "N/A",
       locationMethod: inferred.method,
       locationConfidence: inferred.confidence,
       sourceTags: [
-        { label: "Source: ABN Registration", tone: "emerald" as const },
+        { label: sourceLabel, tone: "emerald" as const },
         { label: `Inference: ${inferred.method}`, tone: "blue" as const },
         { label: "Layer A: ALA + IUCN", tone: "amber" as const },
       ],

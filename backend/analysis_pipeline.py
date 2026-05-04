@@ -7,8 +7,8 @@ that logic back into main.py.
 
 from __future__ import annotations
 
+import os
 import re
-import shutil
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -16,28 +16,56 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, UploadFile
 
-from abn_pipeline import clean_abn, is_abn, search_company_name_with_abr, verify_abn_with_abr
-from run_ecotrace import (
-    article_candidate_score,
-    build_company_search_queries,
-    company_search_name,
-    dedupe_article_metadata,
-    relevant_llm_candidates,
-    resolve_report_paths,
-    test_freenewsapi,
-    test_guardian,
-    test_newsapi,
-    test_newsdata,
-    test_nyt,
-    test_openrouter_many,
-    test_serpapi,
-    test_uploaded_reports,
-    test_webz,
-)
+try:
+    from .abn_pipeline import clean_abn, is_abn, search_company_name_with_abr, verify_abn_with_abr
+    from .run_ecotrace import (
+        article_candidate_score,
+        build_company_search_queries,
+        company_search_name,
+        dedupe_article_metadata,
+        relevant_llm_candidates,
+        resolve_report_paths,
+        test_freenewsapi,
+        test_guardian,
+        test_newsapi,
+        test_newsdata,
+        test_nyt,
+        test_openrouter_many,
+        test_serpapi,
+        test_uploaded_reports,
+        test_webz,
+    )
+except ImportError:
+    from abn_pipeline import clean_abn, is_abn, search_company_name_with_abr, verify_abn_with_abr
+    from run_ecotrace import (
+        article_candidate_score,
+        build_company_search_queries,
+        company_search_name,
+        dedupe_article_metadata,
+        relevant_llm_candidates,
+        resolve_report_paths,
+        test_freenewsapi,
+        test_guardian,
+        test_newsapi,
+        test_newsdata,
+        test_nyt,
+        test_openrouter_many,
+        test_serpapi,
+        test_uploaded_reports,
+        test_webz,
+    )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPORTS_DIR = REPO_ROOT / "reports"
+
+
+def max_report_upload_bytes() -> int:
+    try:
+        limit_mb = int(os.getenv("MAX_REPORT_UPLOAD_MB", os.getenv("MAX_UPLOAD_MB", "10")))
+    except ValueError:
+        limit_mb = 10
+    return limit_mb * 1024 * 1024
 
 SUPPORTED_REPORT_EXTENSIONS = {
     ".pdf",
@@ -77,6 +105,8 @@ def save_uploaded_reports(files: Optional[List[UploadFile]]) -> List[str]:
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     saved_paths: List[str] = []
+    max_bytes = max_report_upload_bytes()
+    max_mb = max_bytes // (1024 * 1024)
 
     for upload in files:
         filename = safe_report_filename(upload.filename or "")
@@ -91,8 +121,27 @@ def save_uploaded_reports(files: Optional[List[UploadFile]]) -> List[str]:
         if target.exists():
             target = REPORTS_DIR / f"{target.stem}-{int(time.time())}{target.suffix}"
 
-        with target.open("wb") as output:
-            shutil.copyfileobj(upload.file, output)
+        bytes_written = 0
+        try:
+            with target.open("wb") as output:
+                while True:
+                    chunk = upload.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > max_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "Report file exceeds the "
+                                f"{max_mb} MB limit."
+                            ),
+                        )
+                    output.write(chunk)
+        except Exception:
+            if target.exists():
+                target.unlink()
+            raise
         saved_paths.append(str(target))
 
     return saved_paths

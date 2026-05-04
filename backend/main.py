@@ -74,56 +74,94 @@ Version history
 
 import os
 import re
+import hashlib
+import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 from uuid import UUID, uuid4
+from urllib.parse import quote
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 # ------------------------------------------------------------------
 # Pipeline modules
 # ------------------------------------------------------------------
-from abn_pipeline import (
-    run_company_abn_phase,
-    verify_abn_with_abr,
-    search_company_name_with_abr,
-    clean_abn,
-    is_abn,
-)
-from barcode_pipeline import run_barcode_phase
-from brand_pipeline import run_brand_phase, get_ip_australia_access_token, diagnose_token
-from upload_endpoint import router as upload_router
-from analysis_pipeline import (
-    collect_news_evidence,
-    collect_report_evidence,
-    delete_temporary_reports,
-    resolve_company_for_analysis,
-    save_uploaded_reports,
-)
-from bio_diversity_scoring_enigne.ecotrace_layer_a import (
-    SpeciesRecord,
-    ensure_iucn_cache_loaded,
-    get_iucn_cache_status,
-    run_layer_a,
-)
+try:
+    from .abn_pipeline import (
+        run_company_abn_phase,
+        verify_abn_with_abr,
+        search_company_name_with_abr,
+        clean_abn,
+        is_abn,
+    )
+    from .barcode_pipeline import run_barcode_phase
+    from .brand_pipeline import run_brand_phase, get_ip_australia_access_token, diagnose_token
+    from .upload_endpoint import router as upload_router
+    from .analysis_pipeline import (
+        collect_news_evidence,
+        collect_report_evidence,
+        delete_temporary_reports,
+        resolve_company_for_analysis,
+        save_uploaded_reports,
+    )
+    from .bio_diversity_scoring_enigne.ecotrace_layer_a import (
+        SpeciesRecord,
+        ensure_iucn_cache_loaded,
+        get_iucn_cache_status,
+        run_layer_a,
+    )
+except ImportError:
+    from abn_pipeline import (
+        run_company_abn_phase,
+        verify_abn_with_abr,
+        search_company_name_with_abr,
+        clean_abn,
+        is_abn,
+    )
+    from barcode_pipeline import run_barcode_phase
+    from brand_pipeline import run_brand_phase, get_ip_australia_access_token, diagnose_token
+    from upload_endpoint import router as upload_router
+    from analysis_pipeline import (
+        collect_news_evidence,
+        collect_report_evidence,
+        delete_temporary_reports,
+        resolve_company_for_analysis,
+        save_uploaded_reports,
+    )
+    from bio_diversity_scoring_enigne.ecotrace_layer_a import (
+        SpeciesRecord,
+        ensure_iucn_cache_loaded,
+        get_iucn_cache_status,
+        run_layer_a,
+    )
 
 # ------------------------------------------------------------------
 # DB write helpers
 # ------------------------------------------------------------------
-from db_writer import (
-    upsert_company,
-    upsert_trademark,
-    upsert_brand,
-    upsert_product,
-    extract_abr_data,
-)
+try:
+    from .db_writer import (
+        upsert_company,
+        upsert_trademark,
+        upsert_brand,
+        upsert_product,
+        extract_abr_data,
+    )
+except ImportError:
+    from db_writer import (
+        upsert_company,
+        upsert_trademark,
+        upsert_brand,
+        upsert_product,
+        extract_abr_data,
+    )
 
 
 # ============================================================
@@ -158,13 +196,43 @@ Every valid search creates a query_id and stores one search_query record.
 # CORS
 # ============================================================
 
+def get_cors_origins() -> List[str]:
+    raw = os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+cors_origins = get_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with frontend deployment URL in production
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials="*" not in cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+try:
+    from .report_service import (
+        build_query_report,
+        create_persisted_report,
+        deliver_report_email,
+        get_persisted_report,
+        render_report_html,
+        send_persisted_report,
+        valid_email,
+    )
+except ImportError:
+    from report_service import (
+        build_query_report,
+        create_persisted_report,
+        deliver_report_email,
+        get_persisted_report,
+        render_report_html,
+        send_persisted_report,
+        valid_email,
+    )
 
 app.include_router(upload_router)
 
@@ -185,9 +253,19 @@ def warm_iucn_cache_in_background():
     thread.start()
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.on_event("startup")
 def startup_tasks():
-    warm_iucn_cache_in_background()
+    if env_bool("WARM_IUCN_CACHE_ON_STARTUP", True):
+        warm_iucn_cache_in_background()
+    else:
+        print("[Layer A] IUCN startup warmup disabled")
 
 
 # ============================================================
@@ -212,6 +290,46 @@ def serialize_row(row):
     return {k: str(v) if isinstance(v, UUID) else v for k, v in row.items()}
 
 
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verification_return_path(value: Optional[str]) -> str:
+    if not value or not value.startswith("/app/"):
+        return "/app/search"
+    if value.startswith("/app/verify-email"):
+        return "/app/search"
+    return value
+
+
+def frontend_base_url() -> str:
+    return (os.getenv("FRONTEND_BASE_URL") or "http://127.0.0.1:5173").rstrip("/")
+
+
+def ensure_email_verification_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_verification (
+            verification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID REFERENCES "user"(user_id) ON DELETE CASCADE,
+            email VARCHAR(255) NOT NULL,
+            token_hash CHAR(64) NOT NULL UNIQUE,
+            return_to TEXT NOT NULL DEFAULT '/app/search',
+            requested_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMP NOT NULL,
+            verified_at TIMESTAMP,
+            delivery_method VARCHAR(50)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_email_verification_email
+        ON email_verification(email, requested_at DESC);
+        """
+    )
+
+
 # ============================================================
 # Request Models
 # ============================================================
@@ -226,6 +344,29 @@ class SearchRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     email:     str
     user_type: str = "consumer"
+
+
+class SendReportEmailRequest(BaseModel):
+    email: str
+    query_id: str
+
+
+class GenerateReportRequest(BaseModel):
+    query_id: str
+    analysis_payload: Optional[Dict[str, Any]] = None
+
+
+class SendPersistedReportEmailRequest(BaseModel):
+    email: str
+
+
+class RequestEmailVerificationRequest(BaseModel):
+    email: str
+    return_to: Optional[str] = "/app/search"
+
+
+class ConfirmEmailVerificationRequest(BaseModel):
+    token: str
 
 
 # ============================================================
@@ -406,6 +547,21 @@ STATE_CENTROIDS: Dict[str, Tuple[float, float, str]] = {
     "ACT": (-35.2809, 149.1300, "ACT registered address centroid"),
 }
 
+EVIDENCE_LOCATION_CENTROIDS: List[Tuple[str, Tuple[float, float, str, str, float]]] = [
+    ("olympic dam", (-30.4430, 136.8830, "Olympic Dam SA", "SA", 25.0)),
+    ("pilbara", (-22.1000, 118.7000, "Pilbara WA", "WA", 50.0)),
+    ("port hedland", (-20.3107, 118.5878, "Port Hedland WA", "WA", 25.0)),
+    ("mt arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 25.0)),
+    ("mount arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 25.0)),
+    ("bowen basin", (-22.0000, 148.0000, "Bowen Basin QLD", "QLD", 50.0)),
+    ("queensland", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 75.0)),
+    ("south australia", (-30.0000, 135.0000, "South Australia evidence region", "SA", 75.0)),
+    ("western australia", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 75.0)),
+    (" wa", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 75.0)),
+    (" sa", (-30.0000, 135.0000, "South Australia evidence region", "SA", 75.0)),
+    (" qld", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 75.0)),
+]
+
 
 def postcode_prefix_centroid(postcode: Optional[str]) -> Optional[Tuple[float, float, str]]:
     if not postcode:
@@ -429,6 +585,102 @@ def postcode_prefix_centroid(postcode: Optional[str]) -> Optional[Tuple[float, f
     if postcode.startswith("26"):
         return (-35.2809, 149.1300, f"ACT postcode {postcode} centroid")
     return None
+
+
+def evidence_location_centroid(location: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not location:
+        return None
+    normalized = f" {str(location).strip().lower()} "
+    for token, (lat, lon, label, state, radius_km) in EVIDENCE_LOCATION_CENTROIDS:
+        if token in normalized:
+            return {
+                "label": label,
+                "address_raw": f"Evidence extracted location: {location}",
+                "state": state,
+                "postcode": None,
+                "country": "AU",
+                "lat": lat,
+                "lon": lon,
+                "radius_km": radius_km,
+                "confidence": "medium",
+                "method": "evidence extracted location centroid",
+                "source": "report_or_news_evidence",
+                "evidence_location": location,
+            }
+    return None
+
+
+def latest_report_metadata_for_query(cur, query_id: str) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT report_id, metadata_json
+        FROM report
+        WHERE query_id = %s
+        ORDER BY generated_at DESC
+        LIMIT 1;
+        """,
+        (query_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    metadata = row.get("metadata_json")
+    if not isinstance(metadata, dict):
+        return None
+    return {"report_id": str(row["report_id"]), "metadata": metadata}
+
+
+def evidence_location_candidates(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    analysis = metadata.get("analysis_evidence") or {}
+    records = []
+    if isinstance(analysis, dict):
+        for section in ("reports", "news"):
+            section_records = analysis.get(section) or []
+            if isinstance(section_records, list):
+                records.extend(record for record in section_records if isinstance(record, dict))
+
+    candidates: List[Dict[str, Any]] = []
+    for record in records:
+        location_text = record.get("location")
+        centroid = evidence_location_centroid(location_text)
+        if not centroid:
+            continue
+        confidence = record.get("confidence") or record.get("llm_confidence") or 0
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0
+        if confidence_value > 1:
+            confidence_value = confidence_value / 100
+        specificity = 2 if any(
+            token in str(location_text).lower()
+            for token in ("pilbara", "olympic dam", "port hedland", "mt arthur", "mount arthur", "bowen basin")
+        ) else 1
+        candidates.append(
+            {
+                **centroid,
+                "source_record": record,
+                "rank": specificity * 10 + confidence_value,
+            }
+        )
+
+    candidates.sort(key=lambda item: item["rank"], reverse=True)
+    return candidates
+
+
+def infer_location_from_latest_report(cur, query_id: str) -> Optional[Dict[str, Any]]:
+    latest = latest_report_metadata_for_query(cur, query_id)
+    if not latest:
+        return None
+    candidates = evidence_location_candidates(latest["metadata"])
+    if not candidates:
+        return None
+
+    selected = dict(candidates[0])
+    selected.pop("rank", None)
+    selected["report_id"] = latest["report_id"]
+    selected["confidence"] = "high" if len(candidates) > 1 else selected["confidence"]
+    return selected
 
 
 def infer_location_from_abn(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -547,13 +799,174 @@ def persist_inferred_abn_location(cur, row: Dict[str, Any], location: Dict[str, 
         return None
 
 
+def persist_inferred_evidence_location(cur, row: Dict[str, Any], location: Dict[str, Any]) -> Optional[str]:
+    try:
+        cur.execute("SAVEPOINT inferred_evidence_location_write;")
+        cur.execute(
+            """
+            INSERT INTO inferred_location
+                (company_id, source_type, report_id, label, address_raw, state, postcode,
+                 country, latitude, longitude, confidence, prov_agent)
+            VALUES (%s, 'report', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'EcoTrace extracted evidence centroid')
+            ON CONFLICT ON CONSTRAINT uq_inferred_location_source DO UPDATE SET
+                report_id = COALESCE(EXCLUDED.report_id, inferred_location.report_id),
+                label = EXCLUDED.label,
+                address_raw = EXCLUDED.address_raw,
+                state = EXCLUDED.state,
+                postcode = EXCLUDED.postcode,
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude,
+                confidence = EXCLUDED.confidence,
+                extracted_at = NOW()
+            RETURNING location_id;
+            """,
+            (
+                row["company_id"],
+                location.get("report_id"),
+                location["label"],
+                location["address_raw"],
+                location["state"],
+                location["postcode"],
+                location["country"],
+                location["lat"],
+                location["lon"],
+                location["confidence"],
+            ),
+        )
+        saved = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT inferred_evidence_location_write;")
+        return str(saved["location_id"]) if saved else None
+    except Exception as error:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT inferred_evidence_location_write;")
+        except Exception:
+            pass
+        print(f"[Spatial] evidence inferred_location write skipped: {error}")
+        return None
+
+
+def persist_report_evidence_locations(
+    cur,
+    query_id: str,
+    report_id: str,
+    metadata: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not isinstance(metadata, dict):
+        return []
+
+    row = get_query_company_location(cur, query_id)
+    persisted: List[Dict[str, Any]] = []
+    seen = set()
+    for candidate in evidence_location_candidates(metadata):
+        key = (
+            round(float(candidate["lat"]), 5),
+            round(float(candidate["lon"]), 5),
+            str(candidate.get("label") or "").lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+
+        location = dict(candidate)
+        location.pop("rank", None)
+        location["report_id"] = report_id
+        location_id = persist_inferred_evidence_location(cur, row, location)
+        if location_id:
+            persisted.append(
+                {
+                    "location_id": location_id,
+                    "report_id": report_id,
+                    "label": location.get("label"),
+                    "state": location.get("state"),
+                    "lat": location.get("lat"),
+                    "lon": location.get("lon"),
+                    "radius_km": location.get("radius_km"),
+                    "confidence": location.get("confidence"),
+                    "source": location.get("source"),
+                    "method": location.get("method"),
+                    "evidence_location": location.get("evidence_location"),
+                }
+            )
+    return persisted
+
+
+def best_persisted_inferred_location(cur, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT location_id, source_type::text AS source_type, report_id, article_id,
+               label, address_raw, state, postcode, country, latitude, longitude,
+               confidence::text AS confidence, prov_agent, extracted_at
+        FROM inferred_location
+        WHERE company_id = %s
+          AND valid_to IS NULL
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+        ORDER BY
+          CASE source_type WHEN 'report' THEN 1 WHEN 'news' THEN 2 WHEN 'abn' THEN 3 ELSE 4 END,
+          CASE
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%pilbara%%' THEN 1
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%olympic dam%%' THEN 1
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%port hedland%%' THEN 1
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%mt arthur%%' THEN 1
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%mount arthur%%' THEN 1
+            WHEN lower(COALESCE(label, '') || ' ' || COALESCE(address_raw, '')) LIKE '%%bowen basin%%' THEN 1
+            ELSE 2
+          END,
+          CASE confidence WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
+          extracted_at DESC
+        LIMIT 1;
+        """,
+        (row["company_id"],),
+    )
+    saved = cur.fetchone()
+    if not saved:
+        return None
+
+    source_type = saved.get("source_type")
+    evidence_derived = source_type in {"report", "news"}
+    method = (
+        "persisted extracted evidence location"
+        if evidence_derived
+        else "persisted ABN location"
+    )
+    return {
+        "location_id": str(saved["location_id"]),
+        "report_id": str(saved["report_id"]) if saved.get("report_id") else None,
+        "article_id": str(saved["article_id"]) if saved.get("article_id") else None,
+        "label": saved.get("label") or saved.get("address_raw") or "Inferred company location",
+        "address_raw": saved.get("address_raw"),
+        "state": saved.get("state"),
+        "postcode": saved.get("postcode"),
+        "country": saved.get("country") or "AU",
+        "lat": float(saved["latitude"]),
+        "lon": float(saved["longitude"]),
+        "radius_km": 50.0 if evidence_derived else 10.0,
+        "confidence": saved.get("confidence") or "medium",
+        "method": method,
+        "source": f"inferred_location_{source_type}",
+    }
+
+
 def spatial_context_for_query(query_id: str, persist_location: bool = False) -> Dict[str, Any]:
     conn = get_conn()
     cur = conn.cursor()
     try:
         row = get_query_company_location(cur, query_id)
-        location = infer_location_from_abn(row)
-        location_id = persist_inferred_abn_location(cur, row, location) if persist_location else None
+        location = best_persisted_inferred_location(cur, row)
+        location_source = "persisted"
+        if not location:
+            location = infer_location_from_latest_report(cur, query_id)
+            location_source = "evidence"
+        if not location:
+            location = infer_location_from_abn(row)
+            location_source = "abn"
+
+        if persist_location and location_source == "evidence":
+            location_id = persist_inferred_evidence_location(cur, row, location)
+        elif persist_location and location_source == "abn":
+            location_id = persist_inferred_abn_location(cur, row, location)
+        else:
+            location_id = location.get("location_id")
         if persist_location:
             conn.commit()
         return {
@@ -720,6 +1133,112 @@ def create_test_user(payload: CreateUserRequest):
         user = cur.fetchone()
         conn.commit()
         return {"message": "User ready", "user": serialize_row(user)}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/auth/request-verification")
+def request_email_verification(payload: RequestEmailVerificationRequest):
+    email = payload.email.strip().lower()
+    if not valid_email(email):
+        raise HTTPException(status_code=400, detail="Please provide a valid email address")
+
+    return_to = verification_return_path(payload.return_to)
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    verify_url = (
+        f"{frontend_base_url()}/app/verify-email"
+        f"?token={quote(token)}&return_to={quote(return_to, safe='')}"
+    )
+    html_body = f"""<!doctype html>
+<html>
+<body style="font-family:Arial,sans-serif;color:#1c1917;line-height:1.5">
+  <h2>Verify your EcoTrace email</h2>
+  <p>Click the button below to unlock your EcoTrace workspace. This link expires in 30 minutes.</p>
+  <p>
+    <a href="{verify_url}" style="display:inline-block;background:#047857;color:white;padding:12px 18px;border-radius:8px;text-decoration:none">
+      Verify email
+    </a>
+  </p>
+  <p>If the button does not work, open this link:</p>
+  <p><a href="{verify_url}">{verify_url}</a></p>
+</body>
+</html>"""
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_email_verification_table(cur)
+        cur.execute(
+            """
+            INSERT INTO "user" (user_type, email)
+            VALUES ('consumer', %s)
+            ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+            RETURNING user_id;
+            """,
+            (email,),
+        )
+        user_id = cur.fetchone()["user_id"]
+        delivery = deliver_report_email(email, "Verify your EcoTrace email", html_body)
+        cur.execute(
+            """
+            INSERT INTO email_verification
+                (user_id, email, token_hash, return_to, expires_at, delivery_method)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING verification_id, requested_at, expires_at;
+            """,
+            (user_id, email, token_hash(token), return_to, expires_at, delivery["delivery"]),
+        )
+        verification = serialize_row(cur.fetchone())
+        conn.commit()
+        return {
+            "status": "sent",
+            "email": email,
+            "delivery": delivery["delivery"],
+            "path": delivery.get("path"),
+            "verification": verification,
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=502, detail=f"Verification email failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/auth/confirm-verification")
+def confirm_email_verification(payload: ConfirmEmailVerificationRequest):
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Verification token is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_email_verification_table(cur)
+        cur.execute(
+            """
+            UPDATE email_verification
+            SET verified_at = NOW()
+            WHERE token_hash = %s
+              AND verified_at IS NULL
+              AND expires_at > NOW()
+            RETURNING verification_id, user_id, email, return_to, verified_at;
+            """,
+            (token_hash(token),),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+        conn.commit()
+        return {"status": "verified", "verification": serialize_row(row)}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1017,6 +1536,33 @@ def search_entity(payload: SearchRequest):
 # Company Evidence Analysis
 # ============================================================
 
+def _basename(path: str) -> str:
+    return path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+
+
+def original_report_names(reports: Optional[List[UploadFile]]) -> List[str]:
+    if not reports:
+        return []
+    return [Path(report.filename or "uploaded-report").name for report in reports]
+
+
+def remap_report_record_sources(
+    records: List[Dict[str, Any]],
+    saved_to_original: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    remapped = []
+    for record in records:
+        next_record = dict(record)
+        source = next_record.get("source")
+        if isinstance(source, str):
+            source_name = _basename(source)
+            if source_name in saved_to_original:
+                next_record["source"] = saved_to_original[source_name]
+                next_record["source_saved_name"] = source_name
+        remapped.append(next_record)
+    return remapped
+
+
 @app.post("/api/analyse/company")
 def analyse_company_with_reports(
     company_or_abn: str = Form(...),
@@ -1032,7 +1578,12 @@ def analyse_company_with_reports(
     This endpoint keeps the LLM/report flow separate from the consumer
     barcode/brand/company resolver used by POST /api/search.
     """
+    original_names = original_report_names(reports)
     saved_report_paths = save_uploaded_reports(reports)
+    saved_to_original = {
+        _basename(saved_path): original_name
+        for saved_path, original_name in zip(saved_report_paths, original_names)
+    }
 
     try:
         resolution = resolve_company_for_analysis(company_or_abn)
@@ -1084,6 +1635,7 @@ def analyse_company_with_reports(
             report_paths,
             max_report_chunks=max_report_chunks,
         )
+        report_records = remap_report_record_sources(report_records, saved_to_original)
 
         return {
             "query_id": query_id,
@@ -1104,8 +1656,15 @@ def analyse_company_with_reports(
                 "abr": resolution["abr"],
             },
             "search_queries": resolution["queries"],
-            "uploaded_reports": [path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for path in saved_report_paths],
-            "analysed_reports": [path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for path in report_paths],
+            "uploaded_reports": [
+                saved_to_original.get(_basename(path), _basename(path))
+                for path in saved_report_paths
+            ],
+            "analysed_reports": [
+                saved_to_original.get(_basename(path), _basename(path))
+                for path in report_paths
+            ],
+            "saved_report_files": [_basename(path) for path in saved_report_paths],
             "reports_deleted_after_analysis": bool(saved_report_paths),
             "news": {
                 "candidate_count": len(news_candidates),
@@ -1369,6 +1928,185 @@ def get_search_query(query_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ============================================================
+# Report Generation and Email
+# ============================================================
+
+@app.post("/api/report/generate")
+def generate_report(payload: GenerateReportRequest):
+    query_id = payload.query_id.strip()
+    if not query_id:
+        raise HTTPException(status_code=400, detail="query_id is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        saved = create_persisted_report(cur, query_id, payload.analysis_payload)
+        if not saved:
+            raise HTTPException(status_code=404, detail="Query not found")
+        persisted_locations = persist_report_evidence_locations(
+            cur,
+            query_id,
+            saved["report_id"],
+            saved.get("metadata_json"),
+        )
+        conn.commit()
+        start_spatial_analysis_for_query(query_id, force=True)
+        return {
+            "status": "success",
+            "report": saved,
+            "report_id": saved["report_id"],
+            "persisted_locations": persisted_locations,
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/report/{report_id}")
+def get_report(report_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        report = get_persisted_report(cur, report_id.strip())
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return {
+            "status": "success",
+            "report": {
+                key: value
+                for key, value in report.items()
+                if key != "html_content"
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/report/{report_id}/html", response_class=HTMLResponse)
+def get_report_html(report_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        report = get_persisted_report(cur, report_id.strip())
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return HTMLResponse(report["html_content"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/report/{report_id}/email")
+def email_report(report_id: str, payload: SendPersistedReportEmailRequest):
+    email = payload.email.strip()
+    if not valid_email(email):
+        raise HTTPException(status_code=400, detail="Please provide a valid email address")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        delivery = send_persisted_report(cur, report_id.strip(), email)
+        if not delivery:
+            raise HTTPException(status_code=404, detail="Report not found")
+        conn.commit()
+        return {"status": "success", **delivery}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=502, detail=f"Report email failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/report/query/{query_id}")
+def get_query_report(query_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        report = build_query_report(cur, query_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="Query not found")
+        return {"status": "success", "report": report}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/report/query/{query_id}/html", response_class=HTMLResponse)
+def get_query_report_html(query_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        report = build_query_report(cur, query_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="Query not found")
+        return HTMLResponse(render_report_html(report))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/report/email")
+def email_query_report(payload: SendReportEmailRequest):
+    email = payload.email.strip()
+    query_id = payload.query_id.strip()
+    if not valid_email(email):
+        raise HTTPException(status_code=400, detail="Please provide a valid email address")
+    if not query_id:
+        raise HTTPException(status_code=400, detail="query_id is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        saved = create_persisted_report(cur, query_id)
+        if not saved:
+            raise HTTPException(status_code=404, detail="Query not found")
+        delivery = send_persisted_report(cur, saved["report_id"], email)
+        conn.commit()
+        return {
+            "status": "success",
+            "report_id": saved["report_id"],
+            "report_title": saved["title"],
+            **delivery,
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=502, detail=f"Report email failed: {e}")
     finally:
         cur.close()
         conn.close()

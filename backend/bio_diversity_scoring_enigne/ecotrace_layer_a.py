@@ -9,10 +9,12 @@ Datasets:
 import requests
 import time
 import json
+import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
@@ -22,6 +24,7 @@ ALA_OCCURRENCES_URL = "https://biocache-ws.ala.org.au/ws/occurrences/search"
 IUCN_BASE    = "https://api.iucnredlist.org/api/v4"
 TIMEOUT      = 15
 IUCN_DELAY   = 0.5   # seconds between IUCN calls to respect rate limits
+DEFAULT_IUCN_CACHE_FILE = Path(__file__).resolve().parents[1] / "cache" / "iucn_au_cache.json"
 
 # Threat category weights for biodiversity score contribution
 THREAT_WEIGHTS = {
@@ -80,13 +83,28 @@ _iucn_cache_status = {
     "started_at": None,
     "finished_at": None,
     "error": None,
+    "source": None,
+    "cache_file": str(DEFAULT_IUCN_CACHE_FILE),
 }
 
 def get_iucn_cache_status() -> dict:
     return {
         **_iucn_cache_status,
         "count": len(_iucn_au_cache),
+        "cache_file": str(get_iucn_cache_file()),
     }
+
+
+def get_iucn_cache_file() -> Path:
+    configured = (os.getenv("IUCN_CACHE_FILE") or "").strip()
+    return Path(configured) if configured else DEFAULT_IUCN_CACHE_FILE
+
+
+def get_iucn_cache_max_age_hours() -> int:
+    try:
+        return int(os.getenv("IUCN_CACHE_MAX_AGE_HOURS", "168"))
+    except ValueError:
+        return 168
 
 def ensure_iucn_cache_loaded() -> int:
     """
@@ -106,14 +124,23 @@ def ensure_iucn_cache_loaded() -> int:
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "finished_at": None,
                 "error": None,
+                "source": None,
             })
             try:
-                _iucn_au_cache = build_iucn_cache()
+                disk_cache = load_iucn_cache_from_disk()
+                if disk_cache is not None:
+                    _iucn_au_cache = disk_cache
+                    source = "disk"
+                else:
+                    _iucn_au_cache = build_iucn_cache()
+                    save_iucn_cache_to_disk(_iucn_au_cache)
+                    source = "api"
                 _iucn_cache_status.update({
                     "state": "ready",
                     "count": len(_iucn_au_cache),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     "error": None,
+                    "source": source,
                 })
             except Exception as error:
                 _iucn_cache_status.update({
@@ -123,6 +150,63 @@ def ensure_iucn_cache_loaded() -> int:
                 })
                 raise
         return len(_iucn_au_cache)
+
+
+def load_iucn_cache_from_disk() -> Optional[dict]:
+    cache_file = get_iucn_cache_file()
+    max_age_hours = get_iucn_cache_max_age_hours()
+    if max_age_hours <= 0 or not cache_file.exists():
+        return None
+
+    try:
+        with cache_file.open("r", encoding="utf-8") as cache_handle:
+            payload = json.load(cache_handle)
+    except Exception as error:
+        print(f"  [IUCN] Disk cache ignored: {error}")
+        return None
+
+    generated_raw = payload.get("generated_at")
+    records = payload.get("records")
+    if not isinstance(records, dict) or not generated_raw:
+        print("  [IUCN] Disk cache ignored: invalid format")
+        return None
+
+    try:
+        generated_at = datetime.fromisoformat(str(generated_raw).replace("Z", "+00:00"))
+    except ValueError:
+        print("  [IUCN] Disk cache ignored: invalid timestamp")
+        return None
+
+    max_age = timedelta(hours=max_age_hours)
+    if datetime.now(timezone.utc) - generated_at > max_age:
+        print(f"  [IUCN] Disk cache expired: {cache_file}")
+        return None
+
+    print(f"  [IUCN] Loaded disk cache: {len(records):,} Australian species from {cache_file}")
+    return records
+
+
+def save_iucn_cache_to_disk(cache: dict) -> None:
+    if not cache:
+        return
+
+    try:
+        cache_file = get_iucn_cache_file()
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "IUCN Red List v4 countries/AU",
+            "count": len(cache),
+            "records": cache,
+        }
+        tmp_path = cache_file.with_suffix(f"{cache_file.suffix}.tmp")
+        with tmp_path.open("w", encoding="utf-8") as cache_handle:
+            json.dump(payload, cache_handle, ensure_ascii=True, separators=(",", ":"))
+        tmp_path.replace(cache_file)
+        print(f"  [IUCN] Saved disk cache: {cache_file}")
+    except Exception as error:
+        print(f"  [IUCN] Disk cache save skipped: {error}")
+
 
 def build_iucn_cache() -> dict:
     """

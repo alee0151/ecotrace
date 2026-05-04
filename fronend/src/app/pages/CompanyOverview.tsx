@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Card, Chip, RiskBadge } from '../components/shared';
 import { analysisEvidenceCards, companyDisplayName, companyProfileFromAnalysis, loadCompanyAnalysis } from '../lib/analysis';
+import { generateReport, reportHtmlUrl, sendPersistedReportEmail } from '../../lib/api';
 
 type PageId = 'analyse' | 'knowledge';
 
@@ -177,6 +178,10 @@ function SlideCard({ title, badge, children }: {
 export function CompanyOverview() {
   const navigate = useNavigate();
   const analysis = useMemo(() => loadCompanyAnalysis(), []);
+  const queryId = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return window.localStorage.getItem('query_id');
+  }, []);
   const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
   const companyName = companyDisplayName(analysis);
   const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
@@ -652,7 +657,7 @@ export function CompanyOverview() {
 
       {/* === MODALS === */}
       {showWatchlist && <WatchlistModal companyName={companyName} onClose={() => setShowWatchlist(false)} />}
-      {showExport && <ExportModal companyName={companyName} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal companyName={companyName} queryId={queryId} analysis={analysis} onClose={() => setShowExport(false)} />}
     </div>
   );
 }
@@ -690,9 +695,64 @@ function WatchlistModal({ companyName, onClose }: { companyName: string; onClose
   );
 }
 
-function ExportModal({ companyName, onClose }: { companyName: string; onClose: () => void }) {
+function ExportModal({ companyName, queryId, analysis, onClose }: { companyName: string; queryId: string | null; analysis: unknown; onClose: () => void }) {
   const [sections, setSections] = useState({ hero: true, summary: true, composition: true, tnfd: true, findings: true, peers: false, evidence: true, timeline: false });
+  const [email, setEmail] = useState('');
+  const [emailStatus, setEmailStatus] = useState<'idle' | 'generating' | 'sending' | 'sent' | 'error'>('idle');
+  const [reportId, setReportId] = useState<string | null>(() => {
+    if (typeof window === 'undefined' || !queryId) return null;
+    return window.localStorage.getItem(`report_id:${queryId}`) || window.localStorage.getItem('report_id');
+  });
+  const [message, setMessage] = useState<string | null>(null);
   const toggle = (k: keyof typeof sections) => setSections(s => ({ ...s, [k]: !s[k] }));
+  const ensureReport = async () => {
+    if (!queryId) {
+      setEmailStatus('error');
+      setMessage('Run a company search first so EcoTrace has a query_id to report on.');
+      return null;
+    }
+    if (reportId) return reportId;
+
+    setEmailStatus('generating');
+    setMessage('Generating report...');
+    const generated = await generateReport(queryId, analysis || undefined);
+    const nextReportId = generated.report_id;
+    setReportId(nextReportId);
+    window.localStorage.setItem('report_id', nextReportId);
+    window.localStorage.setItem(`report_id:${queryId}`, nextReportId);
+    setEmailStatus('idle');
+    setMessage('Report generated and saved.');
+    return nextReportId;
+  };
+  const openReport = async () => {
+    try {
+      const nextReportId = await ensureReport();
+      if (!nextReportId) return;
+      window.open(reportHtmlUrl(nextReportId), '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setEmailStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not generate report.');
+    }
+  };
+  const emailReport = async () => {
+    if (!email.trim()) {
+      setEmailStatus('error');
+      setMessage('Enter an analyst email address.');
+      return;
+    }
+    try {
+      const nextReportId = await ensureReport();
+      if (!nextReportId) return;
+      setEmailStatus('sending');
+      setMessage(null);
+      const result = await sendPersistedReportEmail(nextReportId, email.trim());
+      setEmailStatus('sent');
+      setMessage(result.delivery === 'outbox' ? 'Report saved to backend outbox for local delivery.' : `Report emailed to ${result.to}.`);
+    } catch (error) {
+      setEmailStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not send report email.');
+    }
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={onClose} />
@@ -702,7 +762,7 @@ function ExportModal({ companyName, onClose }: { companyName: string; onClose: (
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:bg-stone-100"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-[13px] text-stone-600">Generate an investor-ready PDF dossier for <b className="text-stone-900">{companyName}</b>.</p>
+          <p className="text-[13px] text-stone-600">Generate an investor-ready report for <b className="text-stone-900">{companyName}</b>. Open it in the browser to save or print as PDF.</p>
           <div>
             <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Include sections</div>
             <div className="grid grid-cols-2 gap-2">
@@ -713,9 +773,33 @@ function ExportModal({ companyName, onClose }: { companyName: string; onClose: (
               ))}
             </div>
           </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-stone-500 mb-2">Email report</div>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={email}
+                onChange={event => setEmail(event.target.value)}
+                placeholder="analyst@firm.com"
+                className="flex-1 px-3 h-10 rounded-lg border border-stone-200 text-[13px] focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+              <button
+                onClick={emailReport}
+                disabled={emailStatus === 'sending'}
+                className="h-10 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:bg-stone-300 text-white text-[13px]"
+              >
+                {emailStatus === 'sending' ? 'Sending' : 'Send'}
+              </button>
+            </div>
+            {message && (
+            <div className={`mt-2 text-[12px] ${emailStatus === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>
+                {message}
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 h-10 rounded-lg border border-stone-200 text-[13px] text-stone-700 hover:bg-stone-50">Cancel</button>
-            <button onClick={onClose} className="flex-1 h-10 rounded-lg bg-stone-900 text-white text-[13px] hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"><Download size={13} /> Export</button>
+            <button onClick={openReport} disabled={emailStatus === 'generating'} className="flex-1 h-10 rounded-lg bg-stone-900 disabled:bg-stone-400 text-white text-[13px] hover:bg-stone-800 inline-flex items-center justify-center gap-1.5"><Download size={13} /> {emailStatus === 'generating' ? 'Generating' : 'Open report'}</button>
           </div>
         </div>
       </div>

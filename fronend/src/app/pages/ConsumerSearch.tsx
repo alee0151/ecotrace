@@ -25,6 +25,11 @@ import {
   type BackendCompanyAnalysis,
   type BackendNewsCandidate,
 } from '../lib/analysis';
+import {
+  analyseCompanyWithReports,
+  resolveCompanyForAnalysis,
+  search as searchEntity,
+} from '../../lib/api';
 
 const HERO_IMG = 'https://images.unsplash.com/photo-1758702160898-6f96d1db5b73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600';
 
@@ -77,10 +82,6 @@ type ResolvedEntity = {
   source?: string;
   imageUrl?: string;
 };
-
-function apiBase() {
-  return 'http://127.0.0.1:8000';
-}
 
 function buildSearchBody(searchMode: SearchMode, searchValue: string) {
   if (searchMode === 'barcode') return { barcode: searchValue, brand: '', company_or_abn: '' };
@@ -146,16 +147,7 @@ export function ConsumerSearch() {
   const resolveCompany = async (searchValue: string) => {
     const resolveForm = new FormData();
     resolveForm.append('company_or_abn', searchValue);
-
-    const resolveRes = await fetch(`${apiBase()}/api/analyse/company/resolve`, {
-      method: 'POST',
-      body: resolveForm,
-    });
-    const resolveData = await resolveRes.json();
-
-    if (!resolveRes.ok) {
-      throw new Error(resolveData.detail || 'Company resolution failed');
-    }
+    const resolveData = await resolveCompanyForAnalysis(resolveForm);
 
     const preview = resolveData.resolution || {};
     if (resolveData.query_id) {
@@ -187,16 +179,7 @@ export function ConsumerSearch() {
     reportFiles.forEach(file => formData.append('reports', file));
 
     setProgressStep(reportFiles.length ? 3 : 2);
-
-    const res = await fetch(`${apiBase()}/api/analyse/company`, {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || 'Analysis failed');
-    }
+    const data = await analyseCompanyWithReports(formData);
 
     if (data.query_id) {
       localStorage.setItem('query_id', data.query_id);
@@ -222,16 +205,7 @@ export function ConsumerSearch() {
   };
 
   const resolveGenericSearch = async (searchMode: SearchMode, searchValue: string) => {
-    const res = await fetch(`${apiBase()}/api/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildSearchBody(searchMode, searchValue)),
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || 'Search failed');
-    }
+    const data = await searchEntity(buildSearchBody(searchMode, searchValue));
     if (!data.query_id) {
       throw new Error('Search completed, but no query_id was returned.');
     }
@@ -246,7 +220,7 @@ export function ConsumerSearch() {
     }
 
     setResolved({
-      brand: result.brand?.brand_name || result.product?.brand || result.input_value || 'Unknown brand',
+      brand: result.brand?.brand_name || result.brand_clean || result.brand_owner || result.brand_raw || result.input_value || 'Unknown brand',
       product: result.product?.product_name || result.company?.legal_name || result.brand?.brand_name || result.input_value || 'Unknown product',
       parent: result.company?.legal_name || result.legal_owner || result.manufacturer || result.abn_verification?.legal_name || 'Unknown company',
       abn: result.company?.abn || result.abn_verification?.abn || 'N/A',

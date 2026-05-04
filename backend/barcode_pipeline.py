@@ -42,13 +42,22 @@ from typing import Any, Dict, List, Optional
 import requests
 
 # Reuse the shared OAuth token cache and trademark helpers from brand_pipeline.
-from brand_pipeline import (
-    _quick_search,
-    _fetch_first_available_trademark,
-    _extract_owner_from_record,
-    _build_trademark_summary,
-    _strip_legal_suffix,
-)
+try:
+    from .brand_pipeline import (
+        _quick_search,
+        _fetch_first_available_trademark,
+        _extract_owner_from_record,
+        _build_trademark_summary,
+        _strip_legal_suffix,
+    )
+except ImportError:
+    from brand_pipeline import (
+        _quick_search,
+        _fetch_first_available_trademark,
+        _extract_owner_from_record,
+        _build_trademark_summary,
+        _strip_legal_suffix,
+    )
 
 
 # ============================================================

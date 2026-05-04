@@ -1,25 +1,36 @@
 import { useState } from 'react';
 import { Leaf, Mail, CheckCircle2, X } from 'lucide-react';
+import { requestEmailVerification } from '../../lib/api';
 
 export function EmailGateModal({ 
   onVerify,
   onClose,
-  pageName 
+  pageName,
+  returnTo,
 }: { 
-  onVerify: () => void;
+  onVerify: (email: string) => void;
   onClose: () => void;
   pageName?: string;
+  returnTo: string;
 }) {
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'default' | 'loading' | 'sent' | 'verified'>('default');
   const [showWhy, setShowWhy] = useState(false);
   const [countdown, setCountdown] = useState(60);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (!email.trim()) return;
     setState('loading');
-    setTimeout(() => {
+    setMessage(null);
+    try {
+      const result = await requestEmailVerification(email.trim(), returnTo);
       setState('sent');
-      // Simulate countdown
+      setMessage(
+        result.delivery === 'outbox'
+          ? 'Verification email saved to the local outbox for demo delivery.'
+          : 'Verification link sent. Open it from your inbox to continue.'
+      );
       const timer = setInterval(() => {
         setCountdown(c => {
           if (c <= 1) {
@@ -29,16 +40,10 @@ export function EmailGateModal({
           return c - 1;
         });
       }, 1000);
-      
-      // Auto-verify after a few seconds for demo purposes
-      setTimeout(() => {
-        clearInterval(timer);
-        setState('verified');
-        setTimeout(() => {
-          onVerify();
-        }, 1500);
-      }, 3000);
-    }, 1500);
+    } catch (error) {
+      setState('default');
+      setMessage(error instanceof Error ? error.message : 'Could not send verification link.');
+    }
   };
 
   return (
@@ -101,6 +106,12 @@ export function EmailGateModal({
                 )}
               </button>
 
+              {message && (
+                <div className={`text-[12px] text-center ${state === 'default' ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  {message}
+                </div>
+              )}
+
               <div className="text-[11.5px] text-stone-500 text-center">
                 We'll email you a one-click verification link. No password needed.
               </div>
@@ -134,9 +145,10 @@ export function EmailGateModal({
                   Resend in 0:{countdown.toString().padStart(2, '0')}
                 </span>
               ) : (
-                <button className="text-emerald-700 hover:text-emerald-800 underline">Resend link</button>
+                <button onClick={handleSubmit} className="text-emerald-700 hover:text-emerald-800 underline">Resend link</button>
               )}
             </div>
+            {message && <div className="text-[12px] text-emerald-700 mt-3">{message}</div>}
             <div className="mt-4 flex justify-center">
                <div className="flex items-center gap-2 text-stone-400 text-[11px]">
                  <div className="w-3 h-3 border-2 border-stone-300 border-t-emerald-500 rounded-full animate-spin" />

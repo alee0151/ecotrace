@@ -25,7 +25,7 @@ DB_URL = "postgresql://ecotrace:password@localhost:5432/ecotrace_db"
 # Example: "postgresql://user:password@host:port/dbname"
 
 # File paths — update to your downloaded shapefile locations
-CAPAD_PATH = "~/Downloads/datasets/CAPAD/Collaborative_Australian_Protected_Areas_Database_\(CAPAD\)_2024_-_Terrestrial__.shp"   # or .geojson
+CAPAD_PATH = "~/Downloads/datasets/CAPAD/Collaborative_Australian_Protected_Areas_Database_(CAPAD)_2024_-_Terrestrial__.shp"   # or .geojson
 KBA_PATH   = "~/Downloads/datasets/KBA_Data/KBAsGlobal_2026_March_01_POL.shp"
 IBRA_PATH  = "~/Downloads/datasets/IBRARegion_Aust70/IBRARegion_Aust70.shp"
 

@@ -48,6 +48,42 @@ async function postForm<T>(path: string, form: FormData): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export function apiUrl(path: string): string {
+  return `${BASE}${path}`;
+}
+
+export interface RequestVerificationResponse {
+  status: 'sent';
+  email: string;
+  delivery: 'smtp' | 'outbox';
+  path?: string;
+  verification?: {
+    verification_id: string;
+    requested_at: string;
+    expires_at: string;
+  };
+}
+
+export interface ConfirmVerificationResponse {
+  status: 'verified';
+  verification: {
+    verification_id: string;
+    user_id: string;
+    email: string;
+    return_to: string;
+    verified_at: string;
+  };
+}
+
+export const requestEmailVerification = (email: string, returnTo: string) =>
+  post<RequestVerificationResponse>('/api/auth/request-verification', {
+    email,
+    return_to: returnTo,
+  });
+
+export const confirmEmailVerification = (token: string) =>
+  post<ConfirmVerificationResponse>('/api/auth/confirm-verification', { token });
+
 // ─── shared types ────────────────────────────────────────────────────────────
 
 export interface SearchRequest {
@@ -89,6 +125,9 @@ export interface SearchResult {
   };
   // brand / barcode flows
   brand?: { brand_name?: string };
+  brand_raw?: string;
+  brand_clean?: string;
+  brand_owner?: string;
   product?: {
     product_name?: string;
     image_url?: string;
@@ -153,6 +192,24 @@ export interface SearchQueryRecord {
 export interface UploadResponse {
   message: string;
   filename?: string;
+}
+
+export interface CompanyAnalysisResolveResponse {
+  status: string;
+  query_id?: string | null;
+  resolved_company_id?: string | null;
+  database_error?: string | null;
+  pipeline_steps?: string[];
+  resolution?: Record<string, unknown>;
+}
+
+export interface CompanyAnalysisResponse extends CompanyAnalysisResolveResponse {
+  uploaded_reports?: string[];
+  analysed_reports?: string[];
+  reports_deleted_after_analysis?: boolean;
+  search_queries?: string[];
+  news?: Record<string, unknown>;
+  reports?: Record<string, unknown>;
 }
 
 export interface SpatialSpeciesRecord {
@@ -236,6 +293,35 @@ export interface SpatialLayerAParams {
   max_species?: number;
 }
 
+export interface QueryReportResponse {
+  status: string;
+  report: Record<string, unknown>;
+}
+
+export interface GenerateReportResponse {
+  status: string;
+  report_id: string;
+  report: {
+    report_id: string;
+    query_id: string;
+    title: string;
+    format: string;
+    status: string;
+    generated_at: string;
+    metadata_json?: Record<string, unknown>;
+  };
+}
+
+export interface SendReportEmailResponse {
+  status: string;
+  report_id?: string;
+  report_title?: string;
+  delivery: 'smtp' | 'outbox';
+  to: string;
+  path?: string;
+  sent_at?: string;
+}
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 /**
@@ -244,6 +330,12 @@ export interface SpatialLayerAParams {
  */
 export const search = (body: SearchRequest) =>
   post<SearchResponse>('/api/search', body);
+
+export const resolveCompanyForAnalysis = (form: FormData) =>
+  postForm<any>('/api/analyse/company/resolve', form);
+
+export const analyseCompanyWithReports = (form: FormData) =>
+  postForm<any>('/api/analyse/company', form);
 
 /**
  * GET /api/abn/verify/:abn
@@ -333,6 +425,30 @@ export const getSpatialAnalysisForQuery = (queryId: string, force = false) =>
   get<SpatialLayerAResponse>(
     `/api/spatial/query/${encodeURIComponent(queryId)}${force ? '?force=true' : ''}`
   );
+
+export const getQueryReport = (queryId: string) =>
+  get<QueryReportResponse>(`/api/report/query/${encodeURIComponent(queryId)}`);
+
+export const generateReport = (queryId: string, analysisPayload?: unknown) =>
+  post<GenerateReportResponse>('/api/report/generate', {
+    query_id: queryId,
+    analysis_payload: analysisPayload,
+  });
+
+export const getReport = (reportId: string) =>
+  get<QueryReportResponse>(`/api/report/${encodeURIComponent(reportId)}`);
+
+export const reportHtmlUrl = (reportId: string) =>
+  apiUrl(`/api/report/${encodeURIComponent(reportId)}/html`);
+
+export const queryReportHtmlUrl = (queryId: string) =>
+  apiUrl(`/api/report/query/${encodeURIComponent(queryId)}/html`);
+
+export const sendPersistedReportEmail = (reportId: string, email: string) =>
+  post<SendReportEmailResponse>(`/api/report/${encodeURIComponent(reportId)}/email`, { email });
+
+export const sendReportEmail = (queryId: string, email: string) =>
+  post<SendReportEmailResponse>('/api/report/email', { query_id: queryId, email });
 
 /**
  * GET /health

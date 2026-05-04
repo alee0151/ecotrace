@@ -18,7 +18,7 @@ const PROTECTED_PAGES = ['/app/overview', '/app/analyse', '/app/knowledge', '/ap
 export function Root() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(() => localStorage.getItem('ecotrace_email_verified') === 'true');
   const [lastUnprotectedRoute, setLastUnprotectedRoute] = useState<string>('/app/search');
 
   const currentPath = location.pathname;
@@ -26,6 +26,12 @@ export function Root() {
   const meta = titles[pageKey] || { title: 'EcoTrace', subtitle: '' };
   
   const requiresVerification = PROTECTED_PAGES.includes(currentPath) && !emailVerified;
+
+  useEffect(() => {
+    if (localStorage.getItem('ecotrace_email_verified') === 'true') {
+      setEmailVerified(true);
+    }
+  }, [currentPath]);
 
   // Track the last unprotected route
   useEffect(() => {
@@ -36,6 +42,12 @@ export function Root() {
 
   const handleCloseGate = () => {
     navigate(lastUnprotectedRoute);
+  };
+
+  const handleVerified = (email: string) => {
+    localStorage.setItem('ecotrace_email_verified', 'true');
+    localStorage.setItem('ecotrace_verified_email', email);
+    setEmailVerified(true);
   };
 
   return (
@@ -51,7 +63,8 @@ export function Root() {
         {requiresVerification && (
           <EmailGateModal 
             pageName={meta.title} 
-            onVerify={() => setEmailVerified(true)} 
+            returnTo={currentPath}
+            onVerify={handleVerified} 
             onClose={handleCloseGate}
           />
         )}
