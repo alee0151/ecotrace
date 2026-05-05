@@ -262,26 +262,40 @@ except ImportError:
 
 app.include_router(upload_router)
 
+_iucn_warmup_lock = threading.RLock()
+_iucn_warmup_thread: Optional[threading.Thread] = None
+
 
 def warm_iucn_cache_in_background():
     """
     Start Layer A's IUCN Australia cache as soon as the backend is live.
     The cache is kept in memory for the lifetime of this backend process.
     """
-    status = get_iucn_cache_status()
-    if status.get("state") in {"loading", "ready"}:
-        return status
+    global _iucn_warmup_thread
 
-    def _warm():
-        try:
-            count = ensure_iucn_cache_loaded()
-            print(f"[Layer A] IUCN Australia cache ready: {count:,} species")
-        except Exception as error:
-            print(f"[Layer A] IUCN cache warmup failed: {error}")
+    with _iucn_warmup_lock:
+        status = get_iucn_cache_status()
+        if status.get("state") == "ready":
+            return status
+        if status.get("state") == "loading":
+            return status
+        if _iucn_warmup_thread and _iucn_warmup_thread.is_alive():
+            return status
 
-    thread = threading.Thread(target=_warm, daemon=True)
-    thread.start()
-    return get_iucn_cache_status()
+        def _warm():
+            try:
+                count = ensure_iucn_cache_loaded()
+                print(f"[Layer A] IUCN Australia cache ready: {count:,} species")
+            except Exception as error:
+                print(f"[Layer A] IUCN cache warmup failed: {error}")
+
+        _iucn_warmup_thread = threading.Thread(
+            target=_warm,
+            name="iucn-cache-warmup",
+            daemon=True,
+        )
+        _iucn_warmup_thread.start()
+        return get_iucn_cache_status()
 
 
 def env_bool(name: str, default: bool = False) -> bool:

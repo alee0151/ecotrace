@@ -3,7 +3,6 @@ import { Outlet, useLocation, useNavigate } from 'react-router';
 import { Sidebar, PageId } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { EmailGateModal } from './components/EmailGateModal';
-import { warmIucnCache } from '../lib/api';
 
 const titles: Record<string, { title: string; subtitle: string }> = {
   search: { title: 'Search', subtitle: 'Resolve a product, brand, or company' },
@@ -26,12 +25,6 @@ export function Root() {
   const meta = titles[pageKey] || { title: 'Seeco', subtitle: '' };
   
   const requiresVerification = PROTECTED_PAGES.includes(currentPath) && !emailVerified;
-
-  useEffect(() => {
-    warmIucnCache().catch((error) => {
-      console.debug('IUCN cache warmup request failed', error);
-    });
-  }, []);
 
   useEffect(() => {
     if (localStorage.getItem('seeco_email_verified') === 'true') {
