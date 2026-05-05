@@ -47,6 +47,7 @@ import {
   getSpatialAnalysisForQuery,
   reportHtmlUrl,
   sendPersistedReportEmail,
+  queryReportHtmlUrl,
 } from '../../lib/api';
 
 type Tone = 'stone' | 'emerald' | 'blue' | 'amber' | 'rose' | 'purple' | 'sky';
@@ -113,9 +114,18 @@ function formatDate(value?: string | null) {
 }
 
 function spatialScore(spatial: BackendSpatialAnalysis | null | undefined) {
-  const score = spatial?.species_threat_score;
+  const score = spatial?.combined_biodiversity_score ?? spatial?.species_threat_score;
   if (typeof score !== 'number' || !Number.isFinite(score)) return null;
   return Math.round(clamp(score));
+}
+
+function numericBreakdownValue(
+  spatial: BackendSpatialAnalysis | null | undefined,
+  key: string,
+): number | null {
+  const value = spatial?.combined_score_breakdown?.[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return clamp(value);
 }
 
 function sourceLabel(value?: string | null) {
@@ -123,14 +133,6 @@ function sourceLabel(value?: string | null) {
   return value
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, letter => letter.toUpperCase());
-}
-
-function evidenceTitle(record: BackendEvidenceRecord) {
-  return record.biodiversity_signal || record.evidence_type || 'Biodiversity evidence';
-}
-
-function evidenceLocation(record: BackendEvidenceRecord) {
-  return record.location || 'Location not stated';
 }
 
 function categoryTone(category?: string | null): Tone {
@@ -327,10 +329,14 @@ export function CompanyOverview() {
 
   const evidenceRecords = useMemo(() => allEvidenceRecords(analysis), [analysis]);
   const evidenceCards = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
+  const reportSummaryUrl = analysis?.query_id ? queryReportHtmlUrl(analysis.query_id) : null;
   const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
   const companyName = companyDisplayName(analysis);
   const spatial = analysis?.spatial_analysis;
   const layerScore = spatialScore(spatial);
+  const speciesScore = typeof spatial?.species_threat_score === 'number'
+    ? Math.round(clamp(spatial.species_threat_score))
+    : null;
   const score = profile.score;
   const riskLevel = profile.riskLevel;
   const threatCount = spatial?.threatened_species_count ?? 0;
@@ -344,17 +350,29 @@ export function CompanyOverview() {
   const newsCandidates = analysis?.news?.candidates?.length || analysis?.news?.candidate_count || 0;
   const reportEvidence = analysis?.reports?.evidence_count || analysis?.reports?.evidence?.length || 0;
   const riskEvidence = evidenceRecords.filter(record => (record.evidence_type || '').toLowerCase().includes('risk')).length;
+  const regulatoryEvidence = evidenceRecords.filter(record => (record.evidence_type || '').toLowerCase().includes('regulatory')).length;
+  const newsEvidence = evidenceRecords.filter(record => record.source_type === 'news').length;
   const actionEvidence = evidenceRecords.filter(record => {
     const type = (record.evidence_type || '').toLowerCase();
     const signal = (record.biodiversity_signal || '').toLowerCase();
     return /action|mitigation|restoration|rehabilitation|offset/.test(`${type} ${signal}`);
   }).length;
   const entityResolved = Boolean(analysis?.resolution?.abr?.success || analysis?.resolution?.abn);
+  const speciesThreatScore = typeof spatial?.species_threat_score === 'number'
+    ? Math.round(clamp(spatial.species_threat_score))
+    : null;
+  const evidencePressure = numericBreakdownValue(spatial, 'evidence_pressure_component')
+    ?? clamp(riskEvidence * 16 + regulatoryEvidence * 18 + evidenceRecords.length * 4 - actionEvidence * 10);
+  const marketAttention = clamp(
+    Math.sqrt(Math.max(0, newsCandidates)) * 8
+      + newsEvidence * 2
+      + regulatoryEvidence * 10,
+  );
 
   const drivers = [
     {
       label: 'Spatial biodiversity exposure',
-      value: layerScore ?? (spatial?.status === 'loading' ? 25 : 0),
+      value: speciesThreatScore ?? (spatial?.status === 'loading' ? 25 : 0),
       detail: spatial?.status === 'success'
         ? `${threatCount} threatened species across ${assessedSpecies || uniqueSpecies} assessed species at the inferred site.`
         : spatial?.status === 'loading'
@@ -363,13 +381,13 @@ export function CompanyOverview() {
     },
     {
       label: 'Extracted evidence pressure',
-      value: clamp(riskEvidence * 24 + evidenceRecords.length * 8 - actionEvidence * 8),
-      detail: `${riskEvidence} risk record${riskEvidence === 1 ? '' : 's'} and ${actionEvidence} mitigation record${actionEvidence === 1 ? '' : 's'} found in news or uploaded reports.`,
+      value: evidencePressure,
+      detail: `${riskEvidence} risk, ${regulatoryEvidence} regulatory, and ${actionEvidence} action/mitigation record${actionEvidence === 1 ? '' : 's'} found in news or uploaded reports.`,
     },
     {
       label: 'Market and regulatory attention',
-      value: clamp(newsCandidates * 12 + evidenceRecords.filter(record => record.source_type === 'news').length * 10),
-      detail: `${newsCandidates} candidate article${newsCandidates === 1 ? '' : 's'} were screened for biodiversity relevance.`,
+      value: marketAttention,
+      detail: `${newsCandidates} candidate article${newsCandidates === 1 ? '' : 's'} screened, with ${regulatoryEvidence} regulatory signal${regulatoryEvidence === 1 ? '' : 's'} extracted.`,
     },
     {
       label: 'Disclosure coverage gap',
@@ -385,7 +403,7 @@ export function CompanyOverview() {
       ? `${companyName} is resolved to ${analysis?.resolution?.abn ? `ABN ${analysis.resolution.abn}` : 'an ABR entity'}, giving investors a clean legal-entity anchor for evidence attribution.`
       : `${companyName} has not been fully resolved to an ABR entity, so entity attribution should be reviewed before investment use.`,
     spatial?.status === 'success'
-      ? `Layer A spatial analysis returned ${formatNumber(alaRecords)} ALA occurrence records, ${formatNumber(uniqueSpecies)} unique species, and a ${layerScore}/100 species threat score.`
+      ? `Layer A returned ${formatNumber(alaRecords)} ALA occurrence records, ${formatNumber(uniqueSpecies)} unique species, and a ${speciesScore ?? 'N/A'}/100 species threat score. The combined biodiversity score is ${layerScore ?? 'N/A'}/100.`
       : spatial?.status === 'loading'
         ? 'Spatial analysis has started and will enrich the overview when the ALA and IUCN result is ready.'
         : 'Spatial exposure is not yet available, which leaves a material gap in nature-risk assessment.',
@@ -516,7 +534,7 @@ export function CompanyOverview() {
             icon={BarChart3}
             label="Biodiversity risk score"
             value={`${score}/100`}
-            detail={layerScore !== null ? 'Driven by Layer A spatial species threat scoring.' : 'Estimated from evidence pressure until spatial scoring completes.'}
+            detail={layerScore !== null ? 'Combined from Layer A species threat and extracted evidence pressure.' : 'Estimated from evidence pressure until spatial scoring completes.'}
             tone={score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald'}
           />
           <MetricCard
@@ -557,7 +575,7 @@ export function CompanyOverview() {
                   />
                 </div>
                 <div className="mt-3 text-center text-[11.5px] leading-relaxed text-stone-500">
-                  Score uses spatial risk where available and evidence pressure when spatial data is still pending.
+                  Score combines spatial species threat, extracted evidence pressure, and evidence coverage.
                 </div>
               </div>
               <div className="space-y-3">
@@ -632,8 +650,8 @@ export function CompanyOverview() {
                     <div className="text-[22px] text-stone-950 tabular-nums">{formatNumber(uniqueSpecies)}</div>
                   </div>
                   <div>
-                    <div className="text-[11px] text-stone-500">Threat score</div>
-                    <div className="text-[22px] text-stone-950 tabular-nums">{layerScore !== null ? `${layerScore}/100` : 'N/A'}</div>
+                    <div className="text-[11px] text-stone-500">Species threat</div>
+                    <div className="text-[22px] text-stone-950 tabular-nums">{speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'}</div>
                   </div>
                   <div>
                     <div className="text-[11px] text-stone-500">Radius</div>
@@ -676,34 +694,40 @@ export function CompanyOverview() {
             <SectionTitle title="Evidence dossier" action={<Chip tone="blue">{evidenceCards.length} records</Chip>} />
             {evidenceCards.length ? (
               <div className="space-y-3">
-                {evidenceRecords.slice(0, 5).map((record, index) => {
-                  const conf = confidencePercent(record);
-                  const tone = conf >= 80 ? 'emerald' : conf >= 60 ? 'blue' : 'amber';
+                {evidenceCards.slice(0, 5).map((item, index) => {
+                  const tone = item.conf >= 80 ? 'emerald' : item.conf >= 60 ? 'blue' : 'amber';
+                  const sourceHref = item.url || (item.sourceType === 'report' ? reportSummaryUrl : null);
+                  const sourceAction = item.url ? 'Open source' : item.sourceType === 'report' ? 'Open report summary' : 'Source';
                   return (
-                    <div key={`${evidenceTitle(record)}-${index}`} className="rounded-lg border border-stone-200 bg-white p-4">
+                    <div key={`${item.id}-${index}`} className="rounded-lg border border-stone-200 bg-white p-4">
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <Chip tone={record.source_type === 'news' ? 'sky' : 'purple'}>{sourceLabel(record.source_type)}</Chip>
-                            <Chip tone={tone}>{conf}% confidence</Chip>
-                            {record.source_date && <span className="text-[11.5px] text-stone-500">{formatDate(record.source_date)}</span>}
+                            <Chip tone={item.type === 'News' ? 'sky' : item.type === 'Report' ? 'blue' : 'purple'}>{item.type}</Chip>
+                            {item.evidenceType && <Chip tone="stone">{sourceLabel(item.evidenceType)}</Chip>}
+                            <Chip tone={tone}>{item.conf}% confidence</Chip>
+                            <span className="text-[11.5px] text-stone-500">{formatDate(item.date)}</span>
                           </div>
-                          <div className="mt-2 text-[14px] text-stone-950">{evidenceTitle(record)}</div>
+                          <div className="mt-2 text-[14px] text-stone-950">{item.title}</div>
                           <div className="mt-1 flex flex-wrap gap-3 text-[12px] text-stone-600">
-                            <span className="inline-flex items-center gap-1"><MapPin size={12} /> {evidenceLocation(record)}</span>
-                            <span className="inline-flex items-center gap-1"><Activity size={12} /> {record.activity_type || 'Activity not classified'}</span>
-                            <span className="inline-flex items-center gap-1"><FileText size={12} /> {record.source || 'Source not stated'}</span>
+                            <span className="inline-flex items-center gap-1"><MapPin size={12} /> {item.location || 'Location not stated'}</span>
+                            <span className="inline-flex items-center gap-1"><Activity size={12} /> {item.activityType || 'Activity not classified'}</span>
+                            <span className="inline-flex items-center gap-1"><FileText size={12} /> {item.source}</span>
                           </div>
                         </div>
-                        {record.source_url && (
+                        {sourceHref ? (
                           <a
-                            href={record.source_url}
+                            href={sourceHref}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-200 px-2.5 text-[12px] text-stone-700 hover:bg-stone-50"
                           >
-                            <ExternalLink size={12} /> Source
+                            <ExternalLink size={12} /> {sourceAction}
                           </a>
+                        ) : (
+                          <span className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-100 px-2.5 text-[12px] text-stone-400">
+                            <FileText size={12} /> Source captured
+                          </span>
                         )}
                       </div>
                     </div>

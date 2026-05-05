@@ -27,6 +27,7 @@ try:
         resolve_report_paths,
         test_freenewsapi,
         test_guardian,
+        test_mediastack,
         test_newsapi,
         test_newsdata,
         test_nyt,
@@ -46,6 +47,7 @@ except ImportError:
         resolve_report_paths,
         test_freenewsapi,
         test_guardian,
+        test_mediastack,
         test_newsapi,
         test_newsdata,
         test_nyt,
@@ -194,7 +196,7 @@ def collect_news_evidence(
     company_name: str,
     queries: List[str],
     limit: int = 3,
-    max_llm_results: int = 3,
+    max_llm_results: int = 10,
     australia_only: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     sample_articles = []
@@ -205,6 +207,7 @@ def collect_news_evidence(
         test_nyt,
         test_freenewsapi,
         test_newsdata,
+        test_mediastack,
         test_webz,
     )
 
@@ -217,7 +220,7 @@ def collect_news_evidence(
     candidates = [
         article
         for article in candidates
-        if article_candidate_score(company_name, article, australia_only) >= 90
+        if article_candidate_score(company_name, article, australia_only) >= 80
     ][:max_llm_results]
 
     article_payloads = [asdict(article) for article in candidates]
@@ -227,7 +230,7 @@ def collect_news_evidence(
     records = test_openrouter_many(
         company_name,
         candidates,
-        fetch_full_text=False,
+        fetch_full_text=True,
         australia_only=australia_only,
     )
     return article_payloads, [evidence_record_to_dict(record) for record in records]
@@ -243,6 +246,6 @@ def collect_report_evidence(
         report_paths,
         max_report_chars=3000,
         max_report_chunks=max(1, min(max_report_chunks, 10)),
-        australia_only=False,
+        australia_only=True,
     )
     return [evidence_record_to_dict(record) for record in records]

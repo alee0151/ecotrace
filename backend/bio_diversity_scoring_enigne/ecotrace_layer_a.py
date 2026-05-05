@@ -23,7 +23,8 @@ IUCN_TOKEN   = "istMdZT8xqeky1Hc1o8ZgxHrf62HvsByF5Em"
 ALA_BASE     = "https://biocache-ws.ala.org.au/ws"
 ALA_OCCURRENCES_URL = "https://biocache-ws.ala.org.au/ws/occurrences/search"
 IUCN_BASE    = "https://api.iucnredlist.org/api/v4"
-TIMEOUT      = 15
+TIMEOUT      = int(os.getenv("ALA_TIMEOUT_SECONDS", "30"))
+ALA_RETRIES  = int(os.getenv("ALA_RETRIES", "2"))
 IUCN_DELAY   = 0.5   # seconds between IUCN calls to respect rate limits
 DEFAULT_IUCN_CACHE_FILE = Path(__file__).resolve().parents[1] / "cache" / "iucn_au_cache.json"
 
@@ -348,7 +349,7 @@ def query_ala_species(lat: float, lon: float, radius_km: float,
                           scientific_name, common_name, taxon_rank, record_count
     """
     # ── Step 1: Faceted species query ──────────────────────────────────────────
-    r = requests.get(f"{ALA_BASE}/occurrences/search", params={
+    params = {
         "q":              "*:*",
         "lat":            lat,
         "lon":            lon,
@@ -358,7 +359,20 @@ def query_ala_species(lat: float, lon: float, radius_km: float,
         "fq":             "taxonRank:species",
         "facets":         "taxon_name",
         "flimit":         min(page_size, 1000),  # ALA hard cap is 1000
-    }, timeout=TIMEOUT)
+    }
+    last_error = None
+    for attempt in range(1, max(1, ALA_RETRIES) + 1):
+        try:
+            r = requests.get(f"{ALA_BASE}/occurrences/search", params=params, timeout=TIMEOUT)
+            break
+        except requests.exceptions.Timeout as error:
+            last_error = error
+            if attempt >= max(1, ALA_RETRIES):
+                raise
+            print(f"  [ALA] Timeout on attempt {attempt}; retrying...")
+            time.sleep(1.5 * attempt)
+    else:
+        raise last_error or RuntimeError("ALA request failed")
     r.raise_for_status()
 
     data          = r.json()

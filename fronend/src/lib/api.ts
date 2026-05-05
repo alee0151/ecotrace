@@ -293,6 +293,8 @@ export interface SpatialLayerAResponse {
   iucn_assessed_species?: number;
   threatened_species_count?: number;
   species_threat_score?: number;
+  combined_biodiversity_score?: number;
+  combined_score_breakdown?: Record<string, number | Record<string, number>>;
   score_breakdown?: Record<string, number>;
   threatened_species?: SpatialSpeciesRecord[];
   all_species?: SpatialSpeciesRecord[];

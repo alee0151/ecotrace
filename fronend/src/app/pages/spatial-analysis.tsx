@@ -7,12 +7,13 @@ import {
 } from "../components/spatial-context-bar";
 import { FindingsPanel } from "../components/findings-panel";
 import { BiodiversityMap } from "../components/biodiversity-map";
-import { Stat } from "../components/shared";
+import { Card, Stat } from "../components/shared";
 import {
   getSpatialAnalysisForQuery,
   getSpatialLayerA,
   type SpatialLayerAResponse,
 } from "../../lib/api";
+import { evidenceAnalysisComplete, loadCompanyAnalysis } from "../lib/analysis";
 
 function formatNumber(value?: number) {
   return new Intl.NumberFormat("en-AU").format(value ?? 0);
@@ -35,7 +36,12 @@ function persistSpatialScore(data: SpatialLayerAResponse) {
     if (!raw) return;
 
     const analysis = JSON.parse(raw);
+    if (!evidenceAnalysisComplete(analysis, data.query_id)) return;
     if (analysis?.query_id && data.query_id && analysis.query_id !== data.query_id) return;
+    if (
+      typeof analysis?.spatial_analysis?.combined_biodiversity_score === "number" &&
+      typeof data.combined_biodiversity_score !== "number"
+    ) return;
 
     localStorage.setItem(
       "company_analysis",
@@ -53,8 +59,12 @@ export function SpatialAnalysisPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshIndex, setRefreshIndex] = useState(0);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const analysis = loadCompanyAnalysis();
+  const queryEvidenceReady = evidenceAnalysisComplete(analysis, queryId);
 
   const refreshLayerA = useCallback(() => {
+    setForceRefresh(true);
     setRefreshIndex((value) => value + 1);
   }, []);
 
@@ -99,8 +109,14 @@ export function SpatialAnalysisPage() {
     setLoading(true);
     setError(null);
 
+    if (queryId && !queryEvidenceReady) {
+      setLayerA(null);
+      setLoading(false);
+      return;
+    }
+
     const request = queryId
-      ? getSpatialAnalysisForQuery(queryId, refreshIndex > 0)
+      ? getSpatialAnalysisForQuery(queryId, forceRefresh)
       : getSpatialLayerA({
           lat: site.lat,
           lon: site.lon,
@@ -131,6 +147,7 @@ export function SpatialAnalysisPage() {
       })
       .finally(() => {
         if (!cancelled) {
+          setForceRefresh(false);
           setLoading(false);
         }
       });
@@ -139,7 +156,7 @@ export function SpatialAnalysisPage() {
       cancelled = true;
       if (poll) window.clearTimeout(poll);
     };
-  }, [queryId, refreshIndex, site.lat, site.lon, site.radiusKm, siteFromSpatialResponse]);
+  }, [forceRefresh, queryEvidenceReady, queryId, refreshIndex, site.lat, site.lon, site.radiusKm, siteFromSpatialResponse]);
 
   const handleSiteChange = (nextSite: SpatialSite) => {
     setQueryId(null);
@@ -147,20 +164,45 @@ export function SpatialAnalysisPage() {
   };
 
   const siteOptions = queryId ? [site] : spatialSites;
+  const spatialLocked = Boolean(queryId && !queryEvidenceReady);
   const statusHint = queryId && layerA?.status === "loading"
     ? "Spatial analysis is running from the resolved search query"
-    : queryId
+    : queryId && !queryEvidenceReady
+      ? "Waiting for news and report evidence analysis"
+      : queryId
       ? "Spatial analysis inferred from the latest resolved search query"
       : "Demo spatial site";
 
   return (
     <PageShell
       sectionMarker="  SPATIAL ANALYSIS"
-      coords={`LAT ${site.lat.toFixed(4)}°  LON ${site.lon.toFixed(4)}°  ·  RADIUS ${site.radiusKm} KM`}
+      coords={`LAT ${site.lat.toFixed(4)} deg  LON ${site.lon.toFixed(4)} deg  |  RADIUS ${site.radiusKm} KM`}
     >
       <SpatialContextBar site={site} sites={siteOptions} onSiteChange={handleSiteChange} />
 
+      {spatialLocked ? (
+        <Card className="p-6">
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">
+            Layer A queued
+          </div>
+          <div className="mt-2 text-[18px] text-stone-900">
+            Spatial species analysis will appear after news and report evidence completes.
+          </div>
+          <div className="mt-1 text-[13px] text-stone-500">
+            This keeps the IUCN layer tied to the final evidence-derived location instead of showing an early ABN-only spatial result.
+          </div>
+        </Card>
+      ) : (
+        <>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <Stat
+          label="Species Threat Score"
+          value={loading && !layerA ? "..." : `${(layerA?.species_threat_score ?? 0).toFixed(1)}`}
+          delta="Proportional 0-100 Layer A score"
+          tone={scoreTone(layerA?.species_threat_score)}
+          hint="Threatened species proportion + severity"
+        />
         <Stat
           label="ALA Occurrence Records"
           value={loading && !layerA ? "..." : formatNumber(layerA?.total_ala_records)}
@@ -174,13 +216,6 @@ export function SpatialAnalysisPage() {
           delta={`${formatNumber(layerA?.iucn_assessed_species)} IUCN assessed`}
           tone={(layerA?.threatened_species_count ?? 0) > 0 ? "down" : "up"}
           hint="IUCN Red List v4"
-        />
-        <Stat
-          label="Species Threat Score"
-          value={loading && !layerA ? "..." : `${(layerA?.species_threat_score ?? 0).toFixed(1)}`}
-          delta="Proportional 0-100 Layer A score"
-          tone={scoreTone(layerA?.species_threat_score)}
-          hint="Threatened species proportion + severity"
         />
         <Stat
           label="Analysis Radius"
@@ -204,6 +239,8 @@ export function SpatialAnalysisPage() {
           <BiodiversityMap site={site} layerA={layerA} loading={loading} />
         </div>
       </div>
+        </>
+      )}
     </PageShell>
   );
 }

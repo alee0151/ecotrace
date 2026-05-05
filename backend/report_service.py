@@ -311,10 +311,17 @@ def build_query_report(
     if report_sources:
         key_findings.append(f"Uploaded evidence source reviewed: {', '.join(report_sources[:3])}.")
     if layer_a.get("status") == "success":
+        combined_score = layer_a.get("combined_biodiversity_score")
+        combined_text = (
+            f" The combined biodiversity risk score is {float(combined_score):.1f}/100."
+            if isinstance(combined_score, (int, float))
+            else ""
+        )
         key_findings.append(
             "Layer A biodiversity scoring found "
             f"{layer_a.get('threatened_species_count', 0)} threatened species "
             f"and a species threat score of {float(layer_a.get('species_threat_score') or 0):.1f}/100."
+            f"{combined_text}"
         )
     summary_text = (
         f"{display_name} was resolved from {base.get('input_type')} input. "
@@ -529,6 +536,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
     </section>
 
     <section class="grid">
+      {card("Combined risk score", f"{float(layer_a.get('combined_biodiversity_score') or layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending")}
       {card("Species threat score", f"{float(layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending")}
       {card("ALA occurrence records", layer_a.get("total_ala_records") if layer_a.get("status") == "success" else "Pending")}
       {card("Threatened species", layer_a.get("threatened_species_count") if layer_a.get("status") == "success" else "Pending")}
@@ -646,6 +654,22 @@ def get_persisted_report(cur, report_id: str) -> Dict[str, Any]:
         WHERE report_id = %s;
         """,
         (report_id,),
+    )
+    row = cur.fetchone()
+    return _serializable(dict(row)) if row else {}
+
+
+def get_latest_persisted_report_for_query(cur, query_id: str) -> Dict[str, Any]:
+    cur.execute(
+        """
+        SELECT report_id, query_id, recipient_email, title, format, status,
+               html_content, metadata_json, generated_at, sent_at, delivery_method
+        FROM report
+        WHERE query_id = %s
+        ORDER BY generated_at DESC
+        LIMIT 1;
+        """,
+        (query_id,),
     )
     row = cur.fetchone()
     return _serializable(dict(row)) if row else {}

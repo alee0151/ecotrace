@@ -22,6 +22,7 @@ from ecotrace_pipeline import (
     OpenRouterLLMExtractor,
     SimpleArticleTextRetriever,
     UploadedReportTextReader,
+    australia_relevance_score,
     build_location_options,
     combine_confidence,
     create_llm_extractor_from_env,
@@ -29,6 +30,7 @@ from ecotrace_pipeline import (
     generate_queries,
     infer_payload_from_text,
     is_australia_linked,
+    foreign_relevance_score,
     load_env_file,
     normalize_evidence_type,
     normalize_location,
@@ -38,14 +40,17 @@ from ecotrace_pipeline import (
 )
 from run_ecotrace import (
     article_candidate_score,
+    article_mentions_company,
     article_is_llm_worthy,
     article_source_quality_score,
     build_company_search_queries,
     company_from_search_query,
     company_search_name,
+    extract_one_record,
     report_article_metadata,
     relevant_llm_candidates,
     resolve_report_paths,
+    test_mediastack as mediastack_provider,
 )
 
 
@@ -145,6 +150,84 @@ class PipelineTests(unittest.TestCase):
         )
 
         self.assertTrue(is_australia_linked(record))
+
+    def test_australia_filter_accepts_australian_source_context(self):
+        article = ArticleMetadata(
+            title="Coles supplier biodiversity program",
+            snippet="The supplier award covers Australian beef producers.",
+            source="Beef Central",
+            published_date=None,
+            url="https://www.beefcentral.com/trade/coles-supplier-award/",
+        )
+        extracted = EvidenceRecord(
+            company="Coles",
+            location=None,
+            activity_type="sustainable agriculture",
+            biodiversity_signal="supplier biodiversity program",
+            evidence_type="biodiversity action",
+            source_type="news",
+            source="Beef Central",
+            source_url=article.url,
+            source_date=None,
+            llm_confidence=0.8,
+            confidence=0.0,
+        )
+
+        class ContextOnlyExtractor:
+            def extract(self, item):
+                return extracted
+
+        with patch("run_ecotrace.create_llm_extractor_from_env", return_value=ContextOnlyExtractor()):
+            with patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"}):
+                record = extract_one_record(
+                    "Coles",
+                    article,
+                    fetch_full_text=False,
+                    australia_only=True,
+                    full_text="Australian beef supply chain biodiversity action.",
+                )
+
+        self.assertIs(record, extracted)
+        self.assertEqual(record.location, "Australia-wide")
+
+    def test_australia_filter_rejects_countrywide_location_for_overseas_event(self):
+        article = ArticleMetadata(
+            title="Mining firm BHP found liable for Brazilian dam collapse",
+            snippet="The Samarco disaster in Brazil killed freshwater fish.",
+            source="Guardian",
+            published_date=None,
+            url="https://www.theguardian.com/environment/bhp-brazil-dam-collapse",
+        )
+        extracted = EvidenceRecord(
+            company="BHP",
+            location="Australia-wide",
+            activity_type="mining",
+            biodiversity_signal="killed freshwater fish",
+            evidence_type="biodiversity risk",
+            source_type="news",
+            source="Guardian",
+            source_url=article.url,
+            source_date=None,
+            llm_confidence=0.8,
+            confidence=0.0,
+        )
+
+        class OverseasExtractor:
+            def extract(self, item):
+                return extracted
+
+        with patch("run_ecotrace.create_llm_extractor_from_env", return_value=OverseasExtractor()):
+            with patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"}):
+                record = extract_one_record(
+                    "BHP",
+                    article,
+                    fetch_full_text=False,
+                    australia_only=True,
+                    full_text="Australian company BHP was liable for the Samarco dam collapse in Brazil.",
+                )
+
+        self.assertIsNone(record)
+        self.assertGreater(foreign_relevance_score("Samarco dam collapse in Brazil"), 0)
 
     def test_pipeline_returns_json_ready_output(self):
         pipeline = EcoTracePipeline(
@@ -301,6 +384,46 @@ class PipelineTests(unittest.TestCase):
         candidates = relevant_llm_candidates("Coles", [weak_article, strong_article])
 
         self.assertEqual(candidates, [strong_article])
+
+    def test_mediastack_maps_news_response(self):
+        payload = {
+            "data": [
+                {
+                    "title": "Coles beef supply chain biodiversity program",
+                    "description": "Australian cattle suppliers map biodiversity and natural capital.",
+                    "source": "Beef Central",
+                    "published_at": "2026-05-01T00:00:00+00:00",
+                    "url": "https://example.test/coles-biodiversity",
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"MEDIASTACK_API_KEY": "test-key"}):
+            with patch("run_ecotrace.get_json", return_value=payload) as get_json:
+                articles = mediastack_provider("Coles biodiversity Australia", 5)
+
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(articles[0].source, "Beef Central")
+        self.assertIn("biodiversity", articles[0].snippet)
+        requested_url = get_json.call_args.args[1]
+        self.assertTrue(requested_url.startswith("https://api.mediastack.com/v1/news?"))
+        self.assertIn("access_key=test-key", requested_url)
+
+    def test_company_match_accepts_strong_short_alias(self):
+        article = ArticleMetadata(
+            title="Fortescue reports Pilbara threatened species monitoring",
+            snippet="The mining company describes habitat offset work in Western Australia.",
+            source="Australian Mining",
+            published_date=None,
+            url="https://www.australianmining.com.au/fortescue-species-monitoring",
+        )
+
+        self.assertTrue(article_mentions_company("Fortescue Metals Group", article))
+        self.assertTrue(article_is_llm_worthy("Fortescue Metals Group", article))
+
+    def test_epbc_act_does_not_count_as_capital_territory(self):
+        self.assertEqual(australia_relevance_score("EPBC Act approval conditions"), 0)
+        self.assertGreater(australia_relevance_score("Canberra ACT 2600"), 0)
 
     def test_smoke_search_queries_cover_targeted_company_topics(self):
         queries = build_company_search_queries("Coles")
@@ -847,6 +970,13 @@ class PipelineTests(unittest.TestCase):
                 confidence=0.6,
             ).to_record(),
             EvidenceRecordForTest(
+                location="Australia-wide",
+                biodiversity_signal="biodiversity monitoring",
+                evidence_type="biodiversity action",
+                llm_confidence=0.9,
+                confidence=0.8,
+            ).to_record(),
+            EvidenceRecordForTest(
                 location=None,
                 biodiversity_signal="deforestation risk",
                 evidence_type="biodiversity risk",
@@ -866,6 +996,29 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(len(options), 1)
         self.assertEqual(options[0].location, "Mount Garnet, Queensland")
+
+    def test_location_options_allow_state_when_best_available_but_exclude_countrywide(self):
+        records = [
+            EvidenceRecordForTest(
+                location="Australia-wide",
+                biodiversity_signal="biodiversity monitoring",
+                evidence_type="biodiversity action",
+                llm_confidence=0.9,
+                confidence=0.8,
+            ).to_record(),
+            EvidenceRecordForTest(
+                location="Queensland",
+                biodiversity_signal="koala habitat clearing",
+                evidence_type="biodiversity risk",
+                llm_confidence=0.95,
+                confidence=0.91,
+            ).to_record(),
+        ]
+
+        options = build_location_options(records)
+
+        self.assertEqual(len(options), 1)
+        self.assertEqual(options[0].location, "Queensland")
 
 
 class EvidenceRecordForTest:

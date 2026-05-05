@@ -112,6 +112,17 @@ try:
         resolve_company_for_analysis,
         save_uploaded_reports,
     )
+    from .analysis_cache import (
+        analysis_model_fingerprint,
+        file_sha256,
+        get_analysis_cache,
+        set_analysis_cache,
+        stable_cache_key,
+    )
+    from .combined_biodiversity_score import (
+        combined_biodiversity_score,
+        evidence_records_from_analysis,
+    )
     from .bio_diversity_scoring_enigne.ecotrace_layer_a import (
         SpeciesRecord,
         ensure_iucn_cache_loaded,
@@ -135,6 +146,17 @@ except ImportError:
         delete_temporary_reports,
         resolve_company_for_analysis,
         save_uploaded_reports,
+    )
+    from analysis_cache import (
+        analysis_model_fingerprint,
+        file_sha256,
+        get_analysis_cache,
+        set_analysis_cache,
+        stable_cache_key,
+    )
+    from combined_biodiversity_score import (
+        combined_biodiversity_score,
+        evidence_records_from_analysis,
     )
     from bio_diversity_scoring_enigne.ecotrace_layer_a import (
         SpeciesRecord,
@@ -218,6 +240,7 @@ try:
         build_query_report,
         create_persisted_report,
         deliver_report_email,
+        get_latest_persisted_report_for_query,
         get_persisted_report,
         refresh_persisted_report_content,
         render_report_html,
@@ -229,6 +252,7 @@ except ImportError:
         build_query_report,
         create_persisted_report,
         deliver_report_email,
+        get_latest_persisted_report_for_query,
         get_persisted_report,
         refresh_persisted_report_content,
         render_report_html,
@@ -528,6 +552,7 @@ def persist_company_resolution(
 
 
 SPATIAL_ANALYSIS_CACHE: Dict[str, Dict[str, Any]] = {}
+ANALYSIS_METADATA_CACHE: Dict[str, Dict[str, Any]] = {}
 SPATIAL_ANALYSIS_LOCK = threading.RLock()
 
 POSTCODE_CENTROIDS: Dict[str, Tuple[float, float, str]] = {
@@ -1045,6 +1070,63 @@ def build_layer_a_response(result, context: Optional[Dict[str, Any]] = None) -> 
     return response
 
 
+def latest_analysis_metadata(query_id: str) -> Dict[str, Any]:
+    with SPATIAL_ANALYSIS_LOCK:
+        cached = ANALYSIS_METADATA_CACHE.get(query_id)
+        if isinstance(cached, dict) and cached:
+            return cached
+
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute(
+            """
+            SELECT metadata_json
+            FROM report
+            WHERE query_id = %s
+            ORDER BY generated_at DESC
+            LIMIT 1;
+            """,
+            (query_id,),
+        )
+        row = cur.fetchone()
+        metadata = row.get("metadata_json") if row else None
+        return metadata if isinstance(metadata, dict) else {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def attach_combined_biodiversity_score(
+    spatial_payload: Dict[str, Any],
+    analysis_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    records = evidence_records_from_analysis(analysis_payload)
+    candidate_count = 0
+    if isinstance(analysis_payload, dict):
+        news = analysis_payload.get("news")
+        nested = analysis_payload.get("analysis_evidence")
+    else:
+        news = None
+        nested = None
+    if isinstance(news, dict):
+        candidate_count = int(news.get("candidate_count") or len(news.get("candidates") or []))
+    elif isinstance(nested, dict):
+        candidates = nested.get("news_candidates")
+        if isinstance(candidates, list):
+            candidate_count = len(candidates)
+    combined = combined_biodiversity_score(
+        species_threat_score=spatial_payload.get("species_threat_score"),
+        evidence_records=records,
+        candidate_count=candidate_count,
+    )
+    return {
+        **spatial_payload,
+        "combined_biodiversity_score": combined["combined_score"],
+        "combined_score_breakdown": combined,
+    }
+
+
 def refresh_latest_report_with_spatial(query_id: str, spatial_payload: Dict[str, Any]) -> None:
     conn = get_conn()
     cur = conn.cursor()
@@ -1077,6 +1159,8 @@ def refresh_latest_report_with_spatial(query_id: str, spatial_payload: Dict[str,
 def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[str, Any]:
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
+        if cached and cached.get("status") == "loading":
+            return cached
         if cached and cached.get("status") == "success" and not force:
             return cached
         SPATIAL_ANALYSIS_CACHE[query_id] = {
@@ -1094,7 +1178,11 @@ def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[s
             radius_km=location["radius_km"],
             max_species=50,
         )
-        payload = build_layer_a_response(result, context)
+        analysis_metadata = latest_analysis_metadata(query_id)
+        payload = attach_combined_biodiversity_score(
+            build_layer_a_response(result, context),
+            analysis_metadata,
+        )
         with SPATIAL_ANALYSIS_LOCK:
             SPATIAL_ANALYSIS_CACHE[query_id] = payload
         refresh_latest_report_with_spatial(query_id, payload)
@@ -1117,7 +1205,9 @@ def start_spatial_analysis_for_query(query_id: Optional[str], force: bool = Fals
 
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
-        if cached and cached.get("status") in ("loading", "success") and not force:
+        if cached and cached.get("status") == "loading":
+            return
+        if cached and cached.get("status") == "success" and not force:
             return
 
     def _run():
@@ -1600,14 +1690,31 @@ def remap_report_record_sources(
     return remapped
 
 
+def build_report_cache_files(
+    saved_report_paths: List[str],
+    saved_to_original: Dict[str, str],
+) -> List[Dict[str, str]]:
+    files = []
+    for path in saved_report_paths:
+        saved_name = _basename(path)
+        files.append(
+            {
+                "name": saved_to_original.get(saved_name, saved_name),
+                "sha256": file_sha256(path),
+            }
+        )
+    return sorted(files, key=lambda item: (item["sha256"], item["name"]))
+
+
 @app.post("/api/analyse/company")
 def analyse_company_with_reports(
     company_or_abn: str = Form(...),
     reports: Optional[List[UploadFile]] = File(default=None),
     news_limit: int = Form(3),
-    max_llm_results: int = Form(3),
+    max_llm_results: int = Form(10),
     max_report_chunks: int = Form(3),
     australia_only: bool = Form(True),
+    force_refresh: bool = Form(False),
 ):
     """
     Resolve a company/ABN, then analyse news evidence and uploaded reports.
@@ -1640,8 +1747,6 @@ def analyse_company_with_reports(
                     resolution=resolution,
                 )
                 conn.commit()
-                if query_id and resolved_company_id:
-                    start_spatial_analysis_for_query(query_id)
             finally:
                 cur.close()
                 conn.close()
@@ -1658,28 +1763,82 @@ def analyse_company_with_reports(
             "LLM evidence extraction",
         ]
 
-        news_candidates, news_records = collect_news_evidence(
-            normalized_name,
-            resolution["queries"],
-            limit=max(1, min(news_limit, 10)),
-            max_llm_results=max(0, min(max_llm_results, 10)),
-            australia_only=australia_only,
+        news_limit = max(1, min(news_limit, 10))
+        max_llm_results = max(0, min(max_llm_results, 10))
+        max_report_chunks = max(1, min(max_report_chunks, 10))
+        cache_status = {
+            "news": "bypassed" if force_refresh else "miss",
+            "reports": "bypassed" if force_refresh else "miss",
+        }
+
+        news_cache_key = stable_cache_key(
+            "news",
+            {
+                "normalized_name": normalized_name,
+                "queries": resolution["queries"],
+                "news_limit": news_limit,
+                "max_llm_results": max_llm_results,
+                "australia_only": australia_only,
+                "quality_version": 3,
+                "model": analysis_model_fingerprint(),
+            },
         )
+        news_payload = None if force_refresh else get_analysis_cache("news", news_cache_key)
+        if news_payload:
+            cache_status["news"] = "hit"
+            news_candidates = news_payload.get("candidates", [])
+            news_records = news_payload.get("evidence", [])
+        else:
+            news_candidates, news_records = collect_news_evidence(
+                normalized_name,
+                resolution["queries"],
+                limit=news_limit,
+                max_llm_results=max_llm_results,
+                australia_only=australia_only,
+            )
+            set_analysis_cache(
+                "news",
+                news_cache_key,
+                {"candidates": news_candidates, "evidence": news_records},
+            )
 
         report_paths = saved_report_paths
-        report_records = collect_report_evidence(
-            normalized_name,
-            report_paths,
-            max_report_chunks=max_report_chunks,
-        )
-        report_records = remap_report_record_sources(report_records, saved_to_original)
+        report_files = build_report_cache_files(report_paths, saved_to_original)
+        if report_files:
+            report_cache_key = stable_cache_key(
+                "report",
+                {
+                    "normalized_name": normalized_name,
+                    "files": report_files,
+                    "max_report_chunks": max_report_chunks,
+                    "australia_only": True,
+                    "quality_version": 2,
+                    "model": analysis_model_fingerprint(),
+                },
+            )
+            report_payload = None if force_refresh else get_analysis_cache("report", report_cache_key)
+            if report_payload:
+                cache_status["reports"] = "hit"
+                report_records = report_payload.get("evidence", [])
+            else:
+                report_records = collect_report_evidence(
+                    normalized_name,
+                    report_paths,
+                    max_report_chunks=max_report_chunks,
+                )
+                report_records = remap_report_record_sources(report_records, saved_to_original)
+                set_analysis_cache("report", report_cache_key, {"evidence": report_records})
+        else:
+            cache_status["reports"] = "none"
+            report_records = []
 
-        return {
+        response = {
             "query_id": query_id,
             "status": "success",
             "database_error": database_error,
             "resolved_company_id": resolved_company_id,
             "pipeline_steps": pipeline_steps,
+            "cache": cache_status,
             "resolution": {
                 "input_type": resolution["input_type"],
                 "input_value": resolution["input_value"],
@@ -1713,6 +1872,18 @@ def analyse_company_with_reports(
                 "evidence": report_records,
             },
         }
+        if query_id:
+            with SPATIAL_ANALYSIS_LOCK:
+                ANALYSIS_METADATA_CACHE[query_id] = response
+                cached_spatial = SPATIAL_ANALYSIS_CACHE.get(query_id)
+                if cached_spatial and cached_spatial.get("status") == "success":
+                    SPATIAL_ANALYSIS_CACHE[query_id] = attach_combined_biodiversity_score(
+                        cached_spatial,
+                        response,
+                    )
+        if query_id and resolved_company_id:
+            start_spatial_analysis_for_query(query_id)
+        return response
     finally:
         delete_temporary_reports(saved_report_paths)
 
@@ -1738,8 +1909,6 @@ def resolve_company_analysis_target(company_or_abn: str = Form(...)):
                 resolution=resolution,
             )
             conn.commit()
-            if query_id and resolved_company_id:
-                start_spatial_analysis_for_query(query_id)
         finally:
             cur.close()
             conn.close()
@@ -1812,7 +1981,7 @@ def spatial_layer_a_analysis(
             detail=f"Layer A spatial analysis failed: {error}",
         )
 
-    return build_layer_a_response(result)
+    return attach_combined_biodiversity_score(build_layer_a_response(result))
 
 
 @app.get("/api/spatial/query/{query_id}")
@@ -1830,10 +1999,17 @@ def spatial_analysis_for_query(query_id: str, force: bool = Query(False)):
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
 
     if cached and cached.get("status") == "success" and not force:
+        if "combined_biodiversity_score" not in cached:
+            cached = attach_combined_biodiversity_score(
+                cached,
+                latest_analysis_metadata(query_id),
+            )
+            with SPATIAL_ANALYSIS_LOCK:
+                SPATIAL_ANALYSIS_CACHE[query_id] = cached
         return cached
     if cached and cached.get("status") == "failed" and not force:
         return cached
-    if cached and cached.get("status") == "loading" and not force:
+    if cached and cached.get("status") == "loading":
         try:
             context = spatial_context_for_query(query_id)
             return {**cached, **context}
@@ -1995,11 +2171,13 @@ def generate_report(payload: GenerateReportRequest):
             saved.get("metadata_json"),
         )
         if persisted_locations:
+            metadata = saved.get("metadata_json") or {}
             saved = refresh_persisted_report_content(
                 cur,
                 saved["report_id"],
                 {
-                    **(saved.get("metadata_json") or {}),
+                    **metadata,
+                    "analysis_evidence": metadata.get("analysis_evidence"),
                     "spatial_analysis": SPATIAL_ANALYSIS_CACHE.get(query_id, {}),
                 },
             ) or saved
@@ -2095,7 +2273,9 @@ def get_query_report(query_id: str):
     conn = get_conn()
     cur = conn.cursor()
     try:
-        report = build_query_report(cur, query_id)
+        latest = get_latest_persisted_report_for_query(cur, query_id.strip())
+        analysis_payload = latest.get("metadata_json") if isinstance(latest.get("metadata_json"), dict) else None
+        report = build_query_report(cur, query_id, analysis_payload)
         if not report:
             raise HTTPException(status_code=404, detail="Query not found")
         return {"status": "success", "report": report}
@@ -2113,7 +2293,9 @@ def get_query_report_html(query_id: str):
     conn = get_conn()
     cur = conn.cursor()
     try:
-        report = build_query_report(cur, query_id)
+        latest = get_latest_persisted_report_for_query(cur, query_id.strip())
+        analysis_payload = latest.get("metadata_json") if isinstance(latest.get("metadata_json"), dict) else None
+        report = build_query_report(cur, query_id, analysis_payload)
         if not report:
             raise HTTPException(status_code=404, detail="Query not found")
         return HTMLResponse(render_report_html(report))

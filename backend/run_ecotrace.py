@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -32,7 +33,9 @@ try:
         combine_confidence,
         create_llm_extractor_from_env,
         evidence_context,
+        foreign_relevance_score,
         is_australia_linked,
+        is_countrywide_australia_location,
         load_env_file,
         quality_gate_record,
         source_weight,
@@ -48,7 +51,9 @@ except ImportError:
         combine_confidence,
         create_llm_extractor_from_env,
         evidence_context,
+        foreign_relevance_score,
         is_australia_linked,
+        is_countrywide_australia_location,
         load_env_file,
         quality_gate_record,
         source_weight,
@@ -142,7 +147,7 @@ def main() -> None:
     parser.add_argument("--no-fetch-full-text", dest="fetch_full_text", action="store_false")
     parser.set_defaults(fetch_full_text=True)
     parser.add_argument("--australia-only", action="store_true")
-    parser.add_argument("--max-llm-results", type=int, default=5)
+    parser.add_argument("--max-llm-results", type=int, default=10)
     parser.add_argument(
         "--report-file",
         action="append",
@@ -204,6 +209,7 @@ def main() -> None:
                 test_nyt,
                 test_freenewsapi,
                 test_newsdata,
+                test_mediastack,
                 test_webz,
             ):
                 sample_articles.extend(test_provider(query, args.limit))
@@ -222,7 +228,7 @@ def main() -> None:
         candidate_articles = [
             article
             for article in candidate_articles
-            if article_candidate_score(company, article, args.australia_only) >= 90
+            if article_candidate_score(company, article, args.australia_only) >= 80
         ][: args.max_llm_results]
 
         print()
@@ -338,6 +344,36 @@ def company_search_name(company: str) -> str:
 def company_match_tokens(company: str) -> list[str]:
     search_name = company_search_name(company).lower()
     return [token for token in search_name.split() if token]
+
+
+def token_in_text(token: str, text: str) -> bool:
+    if not token:
+        return False
+    return re.search(rf"\b{re.escape(token.lower())}\b", text.lower()) is not None
+
+
+def company_match_aliases(company: str) -> list[list[str]]:
+    tokens = company_match_tokens(company)
+    aliases: list[list[str]] = []
+    if tokens:
+        aliases.append(tokens)
+
+    strong_tokens = [
+        token
+        for token in tokens
+        if len(token) >= 5 or token.lower() in COMPANY_ACRONYM_TOKENS
+    ]
+    for token in strong_tokens:
+        aliases.append([token])
+
+    seen: set[tuple[str, ...]] = set()
+    unique_aliases: list[list[str]] = []
+    for alias in aliases:
+        key = tuple(alias)
+        if key not in seen:
+            unique_aliases.append(alias)
+            seen.add(key)
+    return unique_aliases
 
 
 def format_company_token(token: str) -> str:
@@ -601,6 +637,48 @@ def test_newsdata(query: str, limit: int) -> list[ArticleMetadata]:
     ]
 
 
+def test_mediastack(query: str, limit: int) -> list[ArticleMetadata]:
+    key = os.getenv("MEDIASTACK_API_KEY")
+    if not key:
+        skipped("Mediastack", "MEDIASTACK_API_KEY missing")
+        return []
+
+    url = build_url(
+        "https://api.mediastack.com/v1/news",
+        {
+            "access_key": key,
+            "keywords": query,
+            "countries": "au",
+            "languages": "en",
+            "sort": "published_desc",
+            "limit": str(min(limit, 100)),
+        },
+    )
+    data = get_json("Mediastack", url)
+    if not data:
+        return []
+
+    articles = _first_list(data, "data", "articles", "results")
+    print_results("Mediastack", articles, limit, title_key="title", url_key="url")
+
+    return [
+        ArticleMetadata(
+            title=str(item.get("title") or ""),
+            snippet=str(item.get("description") or item.get("content") or "")[:500],
+            source=str(item.get("source") or "Mediastack"),
+            published_date=str(item.get("published_at") or item.get("publishedAt") or ""),
+            url=str(item.get("url") or ""),
+        )
+        for item in ranked_metadata_items(
+            query,
+            articles,
+            title_key="title",
+            snippet_key="description",
+            url_key="url",
+        )[:limit]
+    ]
+
+
 def test_webz(query: str, limit: int) -> list[ArticleMetadata]:
     key = os.getenv("WEBZ_API_KEY")
     if not key:
@@ -758,13 +836,26 @@ def extract_one_record(
         length = len(full_text) if full_text else 0
         print(f"[Article retrieval] {status}, chars sent to LLM: {length}")
 
+    context_text = ""
     try:
         extractor = create_llm_extractor_from_env()
         record = extractor.extract(
             ExtractionInput(company=company, article=article, full_text=full_text)
         )
-        quality_gate_record(record, evidence_context(article, full_text))
-        australia_bonus = 0.04 if is_australia_linked(record) else 0.0
+        context_text = evidence_context(article, full_text)
+        quality_gate_record(record, context_text)
+        context_is_australia_linked = australia_relevance_score(context_text) > 0
+        context_is_foreign_linked = foreign_relevance_score(context_text) > 0
+        context_supports_countrywide_australia = (
+            context_is_australia_linked and not context_is_foreign_linked
+        )
+        if context_supports_countrywide_australia and not record.location:
+            record.location = "Australia-wide"
+        australia_bonus = (
+            0.04
+            if is_australia_linked(record) or context_supports_countrywide_australia
+            else 0.0
+        )
         record.confidence = combine_confidence(
             llm_confidence=record.llm_confidence,
             source_count=source_count,
@@ -777,8 +868,20 @@ def extract_one_record(
         return None
 
     print(f"[LLM:{provider}] OK")
-    if australia_only and not is_australia_linked(record):
-        print("[Australia filter] excluded: extracted evidence is not Australia-linked")
+    if (
+        australia_only
+        and is_countrywide_australia_location(record.location)
+        and foreign_relevance_score(context_text) > 0
+    ):
+        print("[Australia filter] excluded: countrywide Australia fallback conflicts with overseas source context")
+        return None
+
+    if (
+        australia_only
+        and not is_australia_linked(record)
+        and australia_relevance_score(context_text) == 0
+    ):
+        print("[Australia filter] excluded: extracted evidence and source text are not Australia-linked")
         return None
 
     print_record(record)
@@ -1072,8 +1175,10 @@ def article_candidate_score(
     company_tokens = company_match_tokens(company)
 
     text = f"{article.title} {article.snippet} {article.url}".lower()
-    company_bonus = sum(40 for token in company_tokens if token in text)
-    company_url_bonus = sum(50 for token in company_tokens if token in article.url.lower())
+    company_bonus = sum(40 for token in company_tokens if token_in_text(token, text))
+    company_url_bonus = sum(
+        50 for token in company_tokens if token_in_text(token, article.url)
+    )
     australia_bonus = australia_relevance_score(text) * 30
     environment_bonus = sum(
         80 for token in ENVIRONMENT_RANKING_TERMS if token in text
@@ -1153,9 +1258,11 @@ def looks_like_generic_article(article: ArticleMetadata) -> bool:
 
 
 def article_mentions_company(company: str, article: ArticleMetadata) -> bool:
-    company_tokens = company_match_tokens(company)
     text = f"{article.title} {article.snippet} {article.url}".lower()
-    return bool(company_tokens) and all(token in text for token in company_tokens)
+    return any(
+        all(token_in_text(token, text) for token in alias)
+        for alias in company_match_aliases(company)
+    )
 
 
 def article_has_environment_signal(article: ArticleMetadata) -> bool:

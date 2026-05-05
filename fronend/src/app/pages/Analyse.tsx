@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Card, Chip, Confidence, SectionTitle } from '../components/shared';
 import { analysisEvidenceCards, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
+import { queryReportHtmlUrl } from '../../lib/api';
 
 const fallbackEvidence = [
   { id: 'e1', type: 'EPBC', title: 'EPBC 2025/09421 - Expansion referral', date: '14 Apr 2026', conf: 92, source: 'Dept of Climate Change' },
@@ -47,18 +48,20 @@ export function Analyse() {
   const traceability = backendEvidence.length
     ? backendEvidence.slice(0, 3).map(item => ({
         claim: item.title,
-        chain: [item.source, item.type].filter(Boolean),
+        chain: [item.source, item.evidenceType || item.activityType || item.type].filter(Boolean),
         conf: item.conf,
+        url: item.url,
       }))
     : fallbackTraceability;
+  const reportSummaryUrl = analysis?.query_id ? queryReportHtmlUrl(analysis.query_id) : null;
 
   return (
     <div className="min-h-[calc(100vh-65px)] bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4]">
       <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="text-[10px] font-mono tracking-[0.25em] uppercase text-stone-500 mb-3">§ 02 · ANALYSE</div>
+        <div className="text-[10px] font-mono tracking-[0.25em] uppercase text-stone-500 mb-3">02 | ANALYSE</div>
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-400">Analyse · {companyName}</div>
+            <div className="text-[11px] uppercase tracking-wider text-stone-400">Analyse | {companyName}</div>
             <div className="text-[26px] text-stone-900">Evidence analysis</div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -106,7 +109,7 @@ export function Analyse() {
           </Card>
 
           <Card className="col-span-12 md:col-span-5 p-6">
-            <SectionTitle title="Claim → source traceability" />
+            <SectionTitle title="Claim to source traceability" />
             <div className="space-y-3">
               {traceability.map((item, index) => (
                 <div key={`${item.claim}-${index}`} className="p-3 bg-stone-50 rounded-xl">
@@ -115,15 +118,25 @@ export function Analyse() {
                     {item.chain.map((source, chainIndex) => (
                       <span key={`${source}-${chainIndex}`} className="inline-flex items-center gap-1">
                         <span className="px-1.5 py-0.5 bg-white border border-stone-200 rounded">{source}</span>
-                        {chainIndex < item.chain.length - 1 && <span>→</span>}
+                        {chainIndex < item.chain.length - 1 && <span>-</span>}
                       </span>
                     ))}
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <Confidence value={item.conf} />
-                    <a className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1 cursor-pointer">
-                      Audit trail <ExternalLink size={10} />
-                    </a>
+                    {item.url ? (
+                      <a href={item.url} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1">
+                        Open source <ExternalLink size={10} />
+                      </a>
+                    ) : reportSummaryUrl ? (
+                      <a href={reportSummaryUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1">
+                        Open report summary <ExternalLink size={10} />
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-stone-400 inline-flex items-center gap-1">
+                        <FileText size={10} /> Source captured
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -142,13 +155,17 @@ export function Analyse() {
                 </div>
                 <div className="text-[14px] text-stone-900">{e.title}</div>
                 <div className="text-[12px] text-stone-500">
-                  {e.source}{'location' in e && e.location ? ` · ${e.location}` : ''}
+                  {e.source}{'location' in e && e.location ? ` | ${e.location}` : ''}
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <Confidence value={e.conf} />
                   {'url' in e && e.url ? (
                     <a href={e.url} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">
                       Open source <ExternalLink size={10} />
+                    </a>
+                  ) : e.sourceType === 'report' && reportSummaryUrl ? (
+                    <a href={reportSummaryUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">
+                      Open report summary <ExternalLink size={10} />
                     </a>
                   ) : (
                     <span className="text-[11px] text-stone-400 inline-flex items-center gap-1">

@@ -60,6 +60,8 @@ export type BackendSpatialAnalysis = {
   iucn_assessed_species?: number;
   threatened_species_count?: number;
   species_threat_score?: number;
+  combined_biodiversity_score?: number;
+  combined_score_breakdown?: Record<string, number | Record<string, number>>;
   score_breakdown?: Record<string, number>;
   threatened_species?: BackendSpatialSpecies[];
   all_species?: BackendSpatialSpecies[];
@@ -137,7 +139,33 @@ export type EvidenceCardData = {
   source: string;
   location?: string | null;
   url?: string;
+  sourceType?: string;
+  evidenceType?: string;
+  activityType?: string;
 };
+
+function sentenceCase(value: string): string {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return cleaned;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function readableEvidenceTitle(record: BackendEvidenceRecord): string {
+  const type = (record.evidence_type || '').toLowerCase();
+  const activity = (record.activity_type || '').toLowerCase();
+  const signal = sentenceCase(record.biodiversity_signal || '');
+
+  if (signal && signal !== 'Unknown') {
+    if (type.includes('action')) return `Biodiversity action: ${signal}`;
+    if (type.includes('risk')) return `Biodiversity risk: ${signal}`;
+    if (type.includes('regulatory')) return `Regulatory signal: ${signal}`;
+    return signal;
+  }
+
+  if (activity) return sentenceCase(activity);
+  if (record.evidence_type) return sentenceCase(record.evidence_type);
+  return 'Biodiversity evidence';
+}
 
 export type EvidenceMapSite = {
   id: string;
@@ -163,9 +191,15 @@ export function loadCompanyAnalysis(): BackendCompanyAnalysis | null {
 
     const spatialRaw = window.localStorage.getItem('latest_spatial_analysis');
     const spatial = spatialRaw ? JSON.parse(spatialRaw) : null;
+    const analysisSpatial = analysis.spatial_analysis;
+    const spatialIsRicher =
+      typeof spatial?.combined_biodiversity_score === 'number' ||
+      typeof analysisSpatial?.combined_biodiversity_score !== 'number';
+
     if (
       spatial?.status === 'success' &&
       typeof spatial.species_threat_score === 'number' &&
+      spatialIsRicher &&
       (!analysis.query_id || !spatial.query_id || spatial.query_id === analysis.query_id)
     ) {
       return { ...analysis, spatial_analysis: spatial };
@@ -175,6 +209,15 @@ export function loadCompanyAnalysis(): BackendCompanyAnalysis | null {
   } catch {
     return null;
   }
+}
+
+export function evidenceAnalysisComplete(
+  analysis: BackendCompanyAnalysis | null,
+  queryId?: string | null,
+): boolean {
+  if (!analysis) return false;
+  if (queryId && analysis.query_id && analysis.query_id !== queryId) return false;
+  return Boolean(analysis.news && analysis.reports);
 }
 
 export function companyDisplayName(analysis: BackendCompanyAnalysis | null): string {
@@ -204,7 +247,9 @@ export function riskLevelFromScore(score: number): RiskLevel {
 export function biodiversityScore(analysis: BackendCompanyAnalysis | null): number {
   if (!analysis) return 45;
 
-  const spatialScore = analysis.spatial_analysis?.species_threat_score;
+  const spatialScore =
+    analysis.spatial_analysis?.combined_biodiversity_score ??
+    analysis.spatial_analysis?.species_threat_score;
   if (typeof spatialScore === 'number' && Number.isFinite(spatialScore)) {
     return Math.max(0, Math.min(100, Math.round(spatialScore)));
   }
@@ -280,12 +325,15 @@ export function analysisEvidenceCards(
     return {
       id: `${record.source_type || 'evidence'}-${index}`,
       type: isReport ? 'Report' : record.source_type === 'news' ? 'News' : 'Evidence',
-      title: record.biodiversity_signal || record.evidence_type || 'Biodiversity evidence',
+      title: readableEvidenceTitle(record),
       date: record.source_date || 'Latest analysis',
       conf: confidencePercent(record),
       source: record.source || (isReport ? 'Uploaded report' : 'News source'),
       location: record.location,
-      url: record.source_url,
+      url: isReport ? undefined : record.source_url,
+      sourceType: record.source_type,
+      evidenceType: record.evidence_type,
+      activityType: record.activity_type,
     };
   });
 }

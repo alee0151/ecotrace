@@ -146,9 +146,9 @@ export function BiodiversityMap({
           </div>
         </div>
         <div className="mt-2 -translate-x-1/2 translate-x-8 whitespace-nowrap rounded-md bg-white/95 px-2 py-1 text-[11px] text-stone-800 ring-1 ring-stone-200 shadow-sm">
-          {site.company} — {site.name}
+          {site.company} - {site.name}
           <div className="text-[10px] text-stone-500">
-            {site.lat.toFixed(4)}, {site.lon.toFixed(4)} · {site.radiusKm} km radius
+            {site.lat.toFixed(4)}, {site.lon.toFixed(4)} | {site.radiusKm} km radius
           </div>
         </div>
       </div>
@@ -157,8 +157,8 @@ export function BiodiversityMap({
       <div className="absolute bottom-4 left-4 flex items-center gap-3 rounded-lg bg-white/95 px-3 py-2 text-[11px] text-stone-600 ring-1 ring-stone-200 shadow-sm">
         <Crosshair className="size-3.5 text-emerald-600" />
         <span className="font-mono">
-          {Math.abs(site.lat).toFixed(2)}°{site.lat < 0 ? "S" : "N"},{" "}
-          {Math.abs(site.lon).toFixed(2)}°{site.lon < 0 ? "W" : "E"}
+          {Math.abs(site.lat).toFixed(2)} deg {site.lat < 0 ? "S" : "N"},{" "}
+          {Math.abs(site.lon).toFixed(2)} deg {site.lon < 0 ? "W" : "E"}
         </span>
         <span className="text-stone-300">|</span>
         <div className="flex items-center gap-2">

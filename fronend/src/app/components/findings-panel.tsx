@@ -68,7 +68,7 @@ function SpeciesRow({ species }: { species: SpatialSpeciesRecord }) {
         <div className="min-w-0">
           <div className="truncate text-[13px] text-stone-900">{species.scientific_name}</div>
           <div className="mt-0.5 truncate text-[11px] text-stone-500">
-            {species.common_name || "Common name unavailable"} · {formatNumber(species.record_count)} records
+            {species.common_name || "Common name unavailable"} | {formatNumber(species.record_count)} records
           </div>
         </div>
         <Chip tone={style.tone}>{code}</Chip>
@@ -114,7 +114,7 @@ export function FindingsPanel({
   return (
     <div className="h-full overflow-y-auto pr-2">
       <div className="mb-2 flex items-center justify-between">
-        <SectionMono>Layer A · Species & Threats</SectionMono>
+        <SectionMono>Layer A | Species & Threats</SectionMono>
         <button
           onClick={onRetry}
           disabled={loading}
@@ -150,7 +150,7 @@ export function FindingsPanel({
           <div>
             <div className="flex items-center gap-1.5 text-[12px] text-stone-500">
               Species Threat Score
-              <InfoTip text="0-100 score based on the proportion and severity of threatened IUCN-assessed species. Occurrence volume is capped as a context signal." />
+              <InfoTip text="0-100 Layer A score based on threatened species proportion and severity." />
             </div>
             <div className="mt-1 text-[34px] leading-tight tracking-tight text-stone-900">
               {loading && !layerA ? "..." : score.toFixed(1)}

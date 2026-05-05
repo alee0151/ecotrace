@@ -21,6 +21,7 @@ import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import {
   allEvidenceRecords,
   companyProfileFromAnalysis,
+  evidenceAnalysisComplete,
   riskLevelFromScore,
   type BackendCompanyAnalysis,
   type BackendNewsCandidate,
@@ -55,6 +56,7 @@ const companyProgressSteps = [
   'Searching news evidence',
   'Scanning uploaded reports',
   'Extracting biodiversity evidence',
+  'Running spatial species analysis',
 ];
 
 const TopoSvg = ({ className = '' }: { className?: string }) => (
@@ -128,7 +130,7 @@ function persistConsumerSearch(state: PersistedConsumerSearch) {
 }
 
 function spatialScore(layerA: SpatialLayerAResponse | null | undefined): number | null {
-  const score = layerA?.species_threat_score;
+  const score = layerA?.combined_biodiversity_score ?? layerA?.species_threat_score;
   if (typeof score !== 'number' || !Number.isFinite(score)) return null;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -139,7 +141,22 @@ function mergeAnalysisWithSpatial(
 ): BackendCompanyAnalysis | null {
   if (!analysis) return null;
   if (analysis.query_id && layerA.query_id && analysis.query_id !== layerA.query_id) return analysis;
+  if (
+    typeof analysis.spatial_analysis?.combined_biodiversity_score === 'number' &&
+    typeof layerA.combined_biodiversity_score !== 'number'
+  ) {
+    return analysis;
+  }
   return { ...analysis, spatial_analysis: layerA };
+}
+
+async function waitForSpatialAnalysis(queryId: string, maxAttempts = 36): Promise<SpatialLayerAResponse | null> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const data = await getSpatialAnalysisForQuery(queryId);
+    if (data.status === 'success' || data.status === 'failed') return data;
+    await new Promise(resolve => window.setTimeout(resolve, 5000));
+  }
+  return null;
 }
 
 function buildSearchBody(searchMode: SearchMode, searchValue: string) {
@@ -199,6 +216,7 @@ export function ConsumerSearch() {
   const navigate = useNavigate();
   const initialSearch = useRef(readPersistedConsumerSearch()).current;
   const initialSpatial = useRef<SpatialLayerAResponse | null>((() => {
+    if (!evidenceAnalysisComplete(initialSearch?.analysis || null, initialSearch?.queryId)) return null;
     const latest = initialSearch?.spatialAnalysis || readLatestSpatialAnalysis();
     if (!latest?.query_id || !initialSearch?.queryId || latest.query_id === initialSearch.queryId) return latest;
     return null;
@@ -218,7 +236,11 @@ export function ConsumerSearch() {
   const resultsRef = useRef<HTMLDivElement>(null);
   const evidenceRecords = allEvidenceRecords(analysis);
   const newsCandidates: BackendNewsCandidate[] = analysis?.news?.candidates || [];
-  const effectiveSpatialAnalysis = spatialAnalysis || analysis?.spatial_analysis;
+  const canShowSpatialAnalysis = evidenceAnalysisComplete(analysis, queryId);
+  const awaitingInlineSpatial = isLoading && progressStep >= 5;
+  const effectiveSpatialAnalysis = canShowSpatialAnalysis
+    ? spatialAnalysis || analysis?.spatial_analysis
+    : null;
   const assessedSpatialScore = spatialScore(effectiveSpatialAnalysis);
 
   const evidenceScoreReasons = analysis
@@ -247,7 +269,7 @@ export function ConsumerSearch() {
       ];
   const scoreReasons = assessedSpatialScore !== null && effectiveSpatialAnalysis?.status === 'success'
     ? [
-        `Spatial Layer A assessed ${effectiveSpatialAnalysis.iucn_assessed_species || 0} IUCN-listed species and ${effectiveSpatialAnalysis.threatened_species_count || 0} threatened species, producing a biodiversity score of ${assessedSpatialScore}/100.`,
+        `The combined biodiversity score is ${assessedSpatialScore}/100, using Layer A species threat plus extracted evidence pressure.`,
         ...evidenceScoreReasons,
       ].slice(0, 3)
     : evidenceScoreReasons;
@@ -268,6 +290,11 @@ export function ConsumerSearch() {
 
   useEffect(() => {
     if (!queryId) return;
+    if (isLoading) return;
+    if (!canShowSpatialAnalysis) {
+      setSpatialAnalysis(null);
+      return;
+    }
 
     let cancelled = false;
     let poll: number | undefined;
@@ -305,7 +332,7 @@ export function ConsumerSearch() {
       cancelled = true;
       if (poll) window.clearTimeout(poll);
     };
-  }, [queryId]);
+  }, [canShowSpatialAnalysis, isLoading, queryId]);
 
   const scrollToResults = () => {
     setTimeout(() => {
@@ -343,7 +370,7 @@ export function ConsumerSearch() {
     const formData = new FormData();
     formData.append('company_or_abn', searchValue);
     formData.append('news_limit', '3');
-    formData.append('max_llm_results', '3');
+    formData.append('max_llm_results', '10');
     formData.append('max_report_chunks', '3');
     formData.append('australia_only', 'true');
     reportFiles.forEach(file => formData.append('reports', file));
@@ -359,9 +386,18 @@ export function ConsumerSearch() {
       localStorage.setItem('company_id', data.resolved_company_id);
     }
     setProgressStep(4);
-    const analysisWithSpatial = spatialAnalysis?.status === 'success'
-      ? mergeAnalysisWithSpatial(data, spatialAnalysis) || data
+    setProgressStep(5);
+
+    const spatial = data.query_id ? await waitForSpatialAnalysis(data.query_id) : null;
+    const analysisWithSpatial = spatial?.status === 'success'
+      ? mergeAnalysisWithSpatial(data, spatial) || data
       : data;
+    if (spatial) {
+      setSpatialAnalysis(spatial);
+      if (spatial.status === 'success') {
+        window.localStorage.setItem(LATEST_SPATIAL_STORAGE_KEY, JSON.stringify(spatial));
+      }
+    }
     localStorage.setItem('company_analysis', JSON.stringify(analysisWithSpatial));
     setAnalysis(analysisWithSpatial);
 
@@ -372,7 +408,7 @@ export function ConsumerSearch() {
       product: displayResolved?.product || resolution.legal_name || resolution.normalized_name || searchValue,
       parent: resolution.legal_name || displayResolved?.parent || 'Unknown company',
       abn: resolution.abn || displayResolved?.abn || 'N/A',
-      score: profile.score,
+      score: spatial?.status === 'success' ? spatialScore(spatial) ?? profile.score : profile.score,
       source: displayResolved?.source || 'ABR + news APIs + uploaded reports',
       imageUrl: displayResolved?.imageUrl,
     });
@@ -571,7 +607,13 @@ export function ConsumerSearch() {
               </Chip>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-2">
+            {awaitingInlineSpatial && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                Waiting for Layer A spatial scoring before showing the final biodiversity score.
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-2">
               {companyProgressSteps.map((step, index) => {
                 const done = index < progressStep;
                 const active = index === progressStep;

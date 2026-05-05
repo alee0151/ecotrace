@@ -143,6 +143,48 @@ AUSTRALIA_LOCATION_TERMS = config_tuple(
     CONFIG, "pipeline", "australia_location_terms"
 )
 GENERIC_LOCATION_VALUES = config_set(CONFIG, "pipeline", "generic_location_values")
+COUNTRYWIDE_AUSTRALIA_LOCATIONS = {
+    "australia",
+    "australian",
+    "australia-wide",
+    "australia wide",
+}
+FOREIGN_LOCATION_TERMS = (
+    "brazil",
+    "brazilian",
+    "samarco",
+    "mariana",
+    "fundao",
+    "new caledonia",
+    "papua new guinea",
+    "indonesia",
+    "central java",
+    "united kingdom",
+    "uk",
+    "london",
+    "britain",
+    "dorset",
+    "curacao",
+    "romania",
+    "transylvania",
+)
+RANKABLE_GENERIC_LOCATION_VALUES = {
+    "western australia",
+    "wa",
+    "new south wales",
+    "nsw",
+    "queensland",
+    "qld",
+    "victoria",
+    "vic",
+    "south australia",
+    "sa",
+    "tasmania",
+    "tas",
+    "northern territory",
+    "nt",
+    "australian capital territory",
+}
 BIODIVERSITY_TERMS = config_tuple(CONFIG, "pipeline", "biodiversity_terms")
 NO_SIGNAL_VALUES = config_set(CONFIG, "pipeline", "no_signal_values")
 WEAK_SIGNAL_VALUES = config_set(CONFIG, "pipeline", "weak_signal_values")
@@ -231,12 +273,38 @@ def australia_relevance_score(text: str) -> int:
     normalized = text.lower()
     score = 0
     for term in AUSTRALIA_LOCATION_TERMS:
+        if term == "act":
+            if (
+                "australian capital territory" in normalized
+                or "canberra" in normalized
+                or re.search(r"\bact\b(?=\s+\d{4}\b|,\s*australia\b)", normalized)
+            ):
+                score += 1
+            continue
         if len(term) <= 3:
             if re.search(rf"\b{re.escape(term)}\b", normalized):
                 score += 1
         elif term in normalized:
             score += 1
     return score
+
+
+def foreign_relevance_score(text: str) -> int:
+    normalized = text.lower()
+    score = 0
+    for term in FOREIGN_LOCATION_TERMS:
+        if len(term) <= 3:
+            if re.search(rf"\b{re.escape(term)}\b", normalized):
+                score += 1
+        elif term in normalized:
+            score += 1
+    return score
+
+
+def is_countrywide_australia_location(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.strip().lower() in COUNTRYWIDE_AUSTRALIA_LOCATIONS
 
 
 def is_australia_linked(record: EvidenceRecord) -> bool:
@@ -1038,6 +1106,15 @@ def is_generic_location(value: str | None) -> bool:
     return normalized in GENERIC_LOCATION_VALUES
 
 
+def is_rankable_location(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().lower()
+    if normalized in RANKABLE_GENERIC_LOCATION_VALUES:
+        return True
+    return not is_generic_location(normalized)
+
+
 def is_more_specific_location(candidate: str, current: str | None) -> bool:
     if not current:
         return True
@@ -1249,7 +1326,7 @@ def group_records_by_location(
 ) -> dict[str, list[EvidenceRecord]]:
     grouped: dict[str, list[EvidenceRecord]] = {}
     for record in records:
-        if is_generic_location(record.location):
+        if not is_rankable_location(record.location):
             continue
         location = record.location.strip()
         grouped.setdefault(location, []).append(record)
