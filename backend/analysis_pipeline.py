@@ -196,7 +196,7 @@ def collect_news_evidence(
     company_name: str,
     queries: List[str],
     limit: int = 3,
-    max_llm_results: int = 10,
+    max_llm_results: int = 3,
     australia_only: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     sample_articles = []

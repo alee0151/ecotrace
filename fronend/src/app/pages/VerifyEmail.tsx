@@ -24,6 +24,7 @@ export function VerifyEmail() {
         const returnTo = result.verification.return_to || fallbackReturnTo;
         localStorage.setItem('seeco_email_verified', 'true');
         localStorage.setItem('seeco_verified_email', email);
+        localStorage.setItem('seeco_user_id', result.verification.user_id);
         setState('verified');
         setMessage(`Verified ${email}. Redirecting...`);
         window.setTimeout(() => navigate(returnTo, { replace: true }), 1200);

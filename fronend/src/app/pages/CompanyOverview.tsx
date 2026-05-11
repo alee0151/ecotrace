@@ -49,6 +49,10 @@ import {
   sendPersistedReportEmail,
   queryReportHtmlUrl,
 } from '../../lib/api';
+import {
+  analysisToCompanyWatchlistPayload,
+  saveCompanyWatchlistForCurrentUser,
+} from '../lib/companyWatchlist';
 
 type Tone = 'stone' | 'emerald' | 'blue' | 'amber' | 'rose' | 'purple' | 'sky';
 
@@ -898,21 +902,59 @@ export function CompanyOverview() {
         </section>
       </div>
 
-      {showWatchlist && <WatchlistModal companyName={companyName} onClose={() => setShowWatchlist(false)} />}
+      {showWatchlist && <WatchlistModal companyName={companyName} analysis={analysis} onClose={() => setShowWatchlist(false)} />}
       {showExport && <ExportModal companyName={companyName} queryId={queryId} analysis={analysis} onClose={() => setShowExport(false)} />}
     </div>
   );
 }
 
-function WatchlistModal({ companyName, onClose }: { companyName: string; onClose: () => void }) {
+function WatchlistModal({
+  companyName,
+  analysis,
+  onClose,
+}: {
+  companyName: string;
+  analysis: BackendCompanyAnalysis;
+  onClose: () => void;
+}) {
   const [freq, setFreq] = useState('weekly');
+  const [notes, setNotes] = useState('');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const saveToWatchlist = async () => {
+    setStatus('saving');
+    setMessage(null);
+    try {
+      const payload = analysisToCompanyWatchlistPayload(analysis);
+      const result = await saveCompanyWatchlistForCurrentUser({
+        ...payload,
+        notes: notes.trim() || null,
+        metadata: {
+          ...(payload.metadata || {}),
+          alert_frequency: freq,
+        },
+      });
+      setStatus('saved');
+      setMessage(
+        result.source === 'backend'
+          ? 'Company saved to your account watchlist.'
+          : 'Company saved to your local watchlist. Connect the database to persist it server-side.',
+      );
+      window.setTimeout(onClose, 900);
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not add company to watchlist.');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-stone-100 p-5">
           <div className="flex items-center gap-2 text-[14px] text-stone-950">
-            <Star size={16} className="text-emerald-600" /> Add to watchlist
+            <Star size={16} className="text-emerald-600" /> Save company analysis
           </div>
           <button
             onClick={onClose}
@@ -924,7 +966,7 @@ function WatchlistModal({ companyName, onClose }: { companyName: string; onClose
         </div>
         <div className="space-y-4 p-5">
           <p className="text-[13px] leading-relaxed text-stone-600">
-            Track <b className="text-stone-950">{companyName}</b> when biodiversity risk, evidence coverage, or spatial exposure changes.
+            Save <b className="text-stone-950">{companyName}</b> to your company watchlist with this analysis snapshot, then refresh it later from the Watchlist page.
           </p>
           <div>
             <div className="mb-2 text-[11px] uppercase text-stone-500">Alert frequency</div>
@@ -945,15 +987,26 @@ function WatchlistModal({ companyName, onClose }: { companyName: string; onClose
             </div>
           </div>
           <div>
-            <div className="mb-2 text-[11px] uppercase text-stone-500">Email</div>
+            <div className="mb-2 text-[11px] uppercase text-stone-500">Notes</div>
             <input
-              type="email"
-              placeholder="analyst@firm.com"
+              type="text"
+              value={notes}
+              onChange={event => setNotes(event.target.value)}
+              placeholder="Portfolio holding, supplier review, AGM question..."
               className="h-9 w-full rounded-lg border border-stone-200 px-3 text-[13px] focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
-          <button onClick={onClose} className="h-10 w-full rounded-lg bg-emerald-700 text-[13px] text-white hover:bg-emerald-800">
-            Add to watchlist
+          {message && (
+            <div className={`text-[12px] ${status === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>
+              {message}
+            </div>
+          )}
+          <button
+            onClick={saveToWatchlist}
+            disabled={status === 'saving' || status === 'saved'}
+            className="h-10 w-full rounded-lg bg-emerald-700 text-[13px] text-white hover:bg-emerald-800 disabled:bg-stone-300"
+          >
+            {status === 'saving' ? 'Saving...' : status === 'saved' ? 'Saved' : 'Save company to watchlist'}
           </button>
         </div>
       </div>

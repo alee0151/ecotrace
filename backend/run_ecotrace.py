@@ -835,6 +835,9 @@ def extract_one_record(
         status = "OK" if full_text else "unavailable"
         length = len(full_text) if full_text else 0
         print(f"[Article retrieval] {status}, chars sent to LLM: {length}")
+        if not full_text:
+            print("[LLM] skipped: article text unavailable")
+            return None
 
     context_text = ""
     try:

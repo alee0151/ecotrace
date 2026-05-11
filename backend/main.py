@@ -84,7 +84,7 @@ from uuid import UUID, uuid4
 from urllib.parse import quote
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,6 +113,7 @@ try:
         save_uploaded_reports,
     )
     from .analysis_cache import (
+        analysis_cache_ttl_hours,
         analysis_model_fingerprint,
         file_sha256,
         get_analysis_cache,
@@ -148,6 +149,7 @@ except ImportError:
         save_uploaded_reports,
     )
     from analysis_cache import (
+        analysis_cache_ttl_hours,
         analysis_model_fingerprint,
         file_sha256,
         get_analysis_cache,
@@ -375,6 +377,185 @@ def ensure_email_verification_table(cur) -> None:
     )
 
 
+def ensure_company_watchlist_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_watchlist (
+            watchlist_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+            company_id UUID REFERENCES company(company_id) ON DELETE SET NULL,
+            query_id UUID REFERENCES search_query(query_id) ON DELETE SET NULL,
+            company_name VARCHAR(255) NOT NULL,
+            abn CHAR(11),
+            industry VARCHAR(255),
+            region VARCHAR(255),
+            risk_score INTEGER,
+            risk_level VARCHAR(30),
+            alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            notes TEXT,
+            metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_company_watchlist_user_company
+        ON company_watchlist (
+            user_id,
+            COALESCE(company_id::text, ''),
+            COALESCE(abn, ''),
+            lower(company_name)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_company_watchlist_user_id
+        ON company_watchlist(user_id, created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_company_watchlist_company_id
+        ON company_watchlist(company_id);
+        """
+    )
+
+
+def ensure_news_analysis_cache_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS news_analysis_cache (
+            cache_key CHAR(64) PRIMARY KEY,
+            company_id UUID REFERENCES company(company_id) ON DELETE SET NULL,
+            normalized_name VARCHAR(255) NOT NULL,
+            params_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            candidates_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+            evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+            model_fingerprint JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_analysis_cache_company_id
+        ON news_analysis_cache(company_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_analysis_cache_expires_at
+        ON news_analysis_cache(expires_at);
+        """
+    )
+
+
+def get_news_analysis_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_news_analysis_cache_table(cur)
+        cur.execute(
+            """
+            SELECT candidates_json, evidence_json
+            FROM news_analysis_cache
+            WHERE cache_key = %s
+              AND expires_at > NOW();
+            """,
+            (cache_key,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return {
+            "candidates": row.get("candidates_json") or [],
+            "evidence": row.get("evidence_json") or [],
+        }
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print(f"[News cache DB] load skipped: {error}")
+        return None
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def set_news_analysis_cache(
+    cache_key: str,
+    normalized_name: str,
+    company_id: Optional[str],
+    params: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+    evidence: List[Dict[str, Any]],
+) -> None:
+    ttl_hours = analysis_cache_ttl_hours("news")
+    if ttl_hours <= 0:
+        return
+
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_news_analysis_cache_table(cur)
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=ttl_hours)
+        cur.execute(
+            """
+            INSERT INTO news_analysis_cache (
+                cache_key,
+                company_id,
+                normalized_name,
+                params_json,
+                candidates_json,
+                evidence_json,
+                model_fingerprint,
+                expires_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (cache_key) DO UPDATE SET
+                company_id = EXCLUDED.company_id,
+                normalized_name = EXCLUDED.normalized_name,
+                params_json = EXCLUDED.params_json,
+                candidates_json = EXCLUDED.candidates_json,
+                evidence_json = EXCLUDED.evidence_json,
+                model_fingerprint = EXCLUDED.model_fingerprint,
+                updated_at = NOW(),
+                expires_at = EXCLUDED.expires_at;
+            """,
+            (
+                cache_key,
+                str(company_id) if company_id else None,
+                normalized_name,
+                Json(params),
+                Json(candidates),
+                Json(evidence),
+                Json(analysis_model_fingerprint()),
+                expires_at,
+            ),
+        )
+        conn.commit()
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print(f"[News cache DB] save skipped: {error}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 # ============================================================
 # Request Models
 # ============================================================
@@ -412,6 +593,29 @@ class RequestEmailVerificationRequest(BaseModel):
 
 class ConfirmEmailVerificationRequest(BaseModel):
     token: str
+
+
+class AddCompanyWatchlistRequest(BaseModel):
+    user_id: str
+    company_id: Optional[str] = None
+    query_id: Optional[str] = None
+    company_name: str
+    abn: Optional[str] = None
+    industry: Optional[str] = None
+    region: Optional[str] = None
+    risk_score: Optional[int] = None
+    risk_level: Optional[str] = None
+    alerts_enabled: bool = True
+    notes: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class UpdateCompanyWatchlistRequest(BaseModel):
+    alerts_enabled: Optional[bool] = None
+    notes: Optional[str] = None
+    risk_score: Optional[int] = None
+    risk_level: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 # ============================================================
@@ -1339,6 +1543,7 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
         return {
             "status": "sent",
             "email": email,
+            "user_id": str(user_id),
             "delivery": delivery["delivery"],
             "path": delivery.get("path"),
             "verification": verification,
@@ -1377,6 +1582,246 @@ def confirm_email_verification(payload: ConfirmEmailVerificationRequest):
             raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
         conn.commit()
         return {"status": "verified", "verification": serialize_row(row)}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ============================================================
+# Company Watchlist
+# ============================================================
+
+def serialize_watchlist_row(row):
+    if not row:
+        return None
+    data = serialize_row(dict(row))
+    if data.get("metadata_json") is None:
+        data["metadata_json"] = {}
+    return data
+
+
+def clean_optional_abn(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = clean_abn(value)
+    return cleaned if cleaned else None
+
+
+@app.get("/api/watchlist/users/{user_id}/companies")
+def get_company_watchlist(user_id: str):
+    if not user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_company_watchlist_table(cur)
+        cur.execute(
+            """
+            SELECT watchlist_id, user_id, company_id, query_id, company_name, abn,
+                   industry, region, risk_score, risk_level, alerts_enabled,
+                   notes, metadata_json, created_at, updated_at
+            FROM company_watchlist
+            WHERE user_id = %s
+            ORDER BY updated_at DESC, created_at DESC;
+            """,
+            (user_id.strip(),),
+        )
+        rows = cur.fetchall()
+        return {
+            "user_id": user_id.strip(),
+            "companies": [serialize_watchlist_row(row) for row in rows],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/watchlist/companies")
+def add_company_to_watchlist(payload: AddCompanyWatchlistRequest):
+    user_id = payload.user_id.strip()
+    company_name = clean_text(payload.company_name)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if not company_name:
+        raise HTTPException(status_code=400, detail="company_name is required")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_company_watchlist_table(cur)
+        cur.execute(
+            """
+            SELECT user_id FROM "user" WHERE user_id = %s;
+            """,
+            (user_id,),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="User not found")
+
+        metadata = payload.metadata or {}
+        abn = clean_optional_abn(payload.abn)
+        cur.execute(
+            """
+            SELECT watchlist_id
+            FROM company_watchlist
+            WHERE user_id = %s
+              AND COALESCE(company_id::text, '') = COALESCE(%s, '')
+              AND COALESCE(abn, '') = COALESCE(%s, '')
+              AND lower(company_name) = lower(%s)
+            LIMIT 1;
+            """,
+            (user_id, payload.company_id, abn, company_name),
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.execute(
+                """
+                UPDATE company_watchlist
+                SET query_id = COALESCE(%s, query_id),
+                    company_name = %s,
+                    industry = %s,
+                    region = %s,
+                    risk_score = %s,
+                    risk_level = %s,
+                    alerts_enabled = %s,
+                    notes = COALESCE(%s, notes),
+                    metadata_json = %s,
+                    updated_at = NOW()
+                WHERE watchlist_id = %s
+                RETURNING watchlist_id, user_id, company_id, query_id, company_name, abn,
+                          industry, region, risk_score, risk_level, alerts_enabled,
+                          notes, metadata_json, created_at, updated_at;
+                """,
+                (
+                    payload.query_id,
+                    company_name,
+                    clean_text(payload.industry),
+                    clean_text(payload.region),
+                    payload.risk_score,
+                    clean_text(payload.risk_level),
+                    payload.alerts_enabled,
+                    clean_text(payload.notes),
+                    Json(metadata),
+                    existing["watchlist_id"],
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return {"status": "saved", "company": serialize_watchlist_row(row)}
+
+        cur.execute(
+            """
+            INSERT INTO company_watchlist (
+                user_id, company_id, query_id, company_name, abn, industry,
+                region, risk_score, risk_level, alerts_enabled, notes, metadata_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING watchlist_id, user_id, company_id, query_id, company_name, abn,
+                      industry, region, risk_score, risk_level, alerts_enabled,
+                      notes, metadata_json, created_at, updated_at;
+            """,
+            (
+                user_id,
+                payload.company_id,
+                payload.query_id,
+                company_name,
+                abn,
+                clean_text(payload.industry),
+                clean_text(payload.region),
+                payload.risk_score,
+                clean_text(payload.risk_level),
+                payload.alerts_enabled,
+                clean_text(payload.notes),
+                Json(metadata),
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {"status": "saved", "company": serialize_watchlist_row(row)}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.patch("/api/watchlist/companies/{watchlist_id}")
+def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatchlistRequest):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_company_watchlist_table(cur)
+        cur.execute(
+            """
+            UPDATE company_watchlist
+            SET alerts_enabled = COALESCE(%s, alerts_enabled),
+                notes = COALESCE(%s, notes),
+                risk_score = COALESCE(%s, risk_score),
+                risk_level = COALESCE(%s, risk_level),
+                metadata_json = COALESCE(%s, metadata_json),
+                updated_at = NOW()
+            WHERE watchlist_id = %s
+            RETURNING watchlist_id, user_id, company_id, query_id, company_name, abn,
+                      industry, region, risk_score, risk_level, alerts_enabled,
+                      notes, metadata_json, created_at, updated_at;
+            """,
+            (
+                payload.alerts_enabled,
+                clean_text(payload.notes),
+                payload.risk_score,
+                clean_text(payload.risk_level),
+                Json(payload.metadata) if payload.metadata is not None else None,
+                watchlist_id.strip(),
+            ),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Watchlist company not found")
+        conn.commit()
+        return {"status": "updated", "company": serialize_watchlist_row(row)}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/api/watchlist/users/{user_id}/companies/{watchlist_id}")
+def delete_company_watchlist_item(user_id: str, watchlist_id: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_company_watchlist_table(cur)
+        cur.execute(
+            """
+            DELETE FROM company_watchlist
+            WHERE user_id = %s AND watchlist_id = %s
+            RETURNING watchlist_id;
+            """,
+            (user_id.strip(), watchlist_id.strip()),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Watchlist company not found")
+        conn.commit()
+        return {"status": "deleted", "watchlist_id": str(row["watchlist_id"])}
     except HTTPException:
         conn.rollback()
         raise
@@ -1785,21 +2230,34 @@ def analyse_company_with_reports(
             "reports": "bypassed" if force_refresh else "miss",
         }
 
-        news_cache_key = stable_cache_key(
-            "news",
-            {
-                "normalized_name": normalized_name,
-                "queries": resolution["queries"],
-                "news_limit": news_limit,
-                "max_llm_results": max_llm_results,
-                "australia_only": australia_only,
-                "quality_version": 3,
-                "model": analysis_model_fingerprint(),
-            },
-        )
-        news_payload = None if force_refresh else get_analysis_cache("news", news_cache_key)
+        news_cache_params = {
+            "normalized_name": normalized_name,
+            "queries": resolution["queries"],
+            "news_limit": news_limit,
+            "max_llm_results": max_llm_results,
+            "australia_only": australia_only,
+            "quality_version": 3,
+            "model": analysis_model_fingerprint(),
+        }
+        news_cache_key = stable_cache_key("news", news_cache_params)
+        news_payload = None
+        if not force_refresh:
+            news_payload = get_news_analysis_cache(news_cache_key)
+            if news_payload:
+                cache_status["news"] = "db_hit"
+        if not news_payload and not force_refresh:
+            news_payload = get_analysis_cache("news", news_cache_key)
+            if news_payload:
+                cache_status["news"] = "disk_hit"
+                set_news_analysis_cache(
+                    news_cache_key,
+                    normalized_name,
+                    resolved_company_id,
+                    news_cache_params,
+                    news_payload.get("candidates", []),
+                    news_payload.get("evidence", []),
+                )
         if news_payload:
-            cache_status["news"] = "hit"
             news_candidates = news_payload.get("candidates", [])
             news_records = news_payload.get("evidence", [])
         else:
@@ -1814,6 +2272,14 @@ def analyse_company_with_reports(
                 "news",
                 news_cache_key,
                 {"candidates": news_candidates, "evidence": news_records},
+            )
+            set_news_analysis_cache(
+                news_cache_key,
+                normalized_name,
+                resolved_company_id,
+                news_cache_params,
+                news_candidates,
+                news_records,
             )
 
         report_paths = saved_report_paths

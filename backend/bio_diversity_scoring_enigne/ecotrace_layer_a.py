@@ -18,6 +18,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+
+def safe_print(message: object = "") -> None:
+    """
+    Keep Layer A logging from crashing under Windows code pages when species
+    names or decorative characters are not representable in the active console.
+    """
+    text = str(message)
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="replace").decode("ascii"))
+
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 IUCN_TOKEN   = "istMdZT8xqeky1Hc1o8ZgxHrf62HvsByF5Em"
 ALA_BASE     = "https://biocache-ws.ala.org.au/ws"
@@ -422,21 +434,21 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     """
     global _iucn_au_cache
 
-    print(f"\n{'='*65}")
-    print(f"  Seeco — Layer A: Species & Threat Data")
-    print(f"  Location : {lat}, {lon}  |  Radius: {radius_km}km")
-    print(f"{'='*65}\n")
+    safe_print(f"\n{'='*65}")
+    safe_print("  Seeco - Layer A: Species & Threat Data")
+    safe_print(f"  Location : {lat}, {lon}  |  Radius: {radius_km}km")
+    safe_print(f"{'='*65}\n")
 
     # ── Step 1: Build IUCN cache if empty ─────────────────────────────────────
     ensure_iucn_cache_loaded()
 
     # ── Step 2: Query ALA ──────────────────────────────────────────────────────
-    print(f"  [ALA] Querying species occurrences within {radius_km}km...")
+    safe_print(f"  [ALA] Querying species occurrences within {radius_km}km...")
     total_records, raw_species = query_ala_species(lat, lon, radius_km, max_species)
-    print(f"  [ALA] Total records: {total_records:,} | Unique species found: {len(raw_species)}\n")
+    safe_print(f"  [ALA] Total records: {total_records:,} | Unique species found: {len(raw_species)}\n")
 
     # ── Step 3: IUCN enrichment ────────────────────────────────────────────────
-    print(f"  [IUCN] Enriching {len(raw_species)} species with threat categories...")
+    safe_print(f"  [IUCN] Enriching {len(raw_species)} species with threat categories...")
     enriched: list[SpeciesRecord] = []
 
     for sp in raw_species:
@@ -481,29 +493,29 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     )
 
     # ── Step 6: Print summary ──────────────────────────────────────────────────
-    print(f"\n  {'─'*60}")
-    print(f"  LAYER A RESULTS")
-    print(f"  {'─'*60}")
-    print(f"  Total ALA records (radius {radius_km}km)  : {total_records:,}")
-    print(f"  Unique species queried                : {len(enriched)}")
-    print(f"  IUCN-assessed species                 : {sum(1 for s in enriched if s.iucn_category)}")
-    print(f"  Threatened species (CR/EN/VU)         : {len(threatened)}")
-    print(f"  Species Threat Score (0–100)          : {normalised}")
-    print()
+    safe_print(f"\n  {'-'*60}")
+    safe_print("  LAYER A RESULTS")
+    safe_print(f"  {'-'*60}")
+    safe_print(f"  Total ALA records (radius {radius_km}km)  : {total_records:,}")
+    safe_print(f"  Unique species queried                : {len(enriched)}")
+    safe_print(f"  IUCN-assessed species                 : {sum(1 for s in enriched if s.iucn_category)}")
+    safe_print(f"  Threatened species (CR/EN/VU)         : {len(threatened)}")
+    safe_print(f"  Species Threat Score (0-100)          : {normalised}")
+    safe_print()
 
     if breakdown:
-        print(f"  Threat Category Breakdown:")
+        safe_print("  Threat Category Breakdown:")
         for cat_label, count in breakdown.items():
-            print(f"    {cat_label:<35} : {count} species")
+            safe_print(f"    {cat_label:<35} : {count} species")
 
     if threatened:
-        print(f"\n  Top Threatened Species:")
+        safe_print("\n  Top Threatened Species:")
         for sp in threatened[:10]:
-            flag = "🔴" if sp.iucn_category == "CR" else "🟠" if sp.iucn_category == "EN" else "🟡"
-            print(f"    {flag} [{sp.iucn_category}] {sp.scientific_name}"
-                  + (f" ({sp.common_name})" if sp.common_name else ""))
+            flag = "CR" if sp.iucn_category == "CR" else "EN" if sp.iucn_category == "EN" else "VU"
+            safe_print(f"    {flag} [{sp.iucn_category}] {sp.scientific_name}"
+                       + (f" ({sp.common_name})" if sp.common_name else ""))
 
-    print(f"  {'─'*60}\n")
+    safe_print(f"  {'-'*60}\n")
     return result
 
 # ── ENTRY POINT ────────────────────────────────────────────────────────────────

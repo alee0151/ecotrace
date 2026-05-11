@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   ArrowRight,
   Barcode,
@@ -152,7 +152,13 @@ function mergeAnalysisWithSpatial(
 
 async function waitForSpatialAnalysis(queryId: string, maxAttempts = 36): Promise<SpatialLayerAResponse | null> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const data = await getSpatialAnalysisForQuery(queryId);
+    let data: SpatialLayerAResponse;
+    try {
+      data = await getSpatialAnalysisForQuery(queryId);
+    } catch (error) {
+      console.debug('Spatial biodiversity score request failed', error);
+      return null;
+    }
     if (data.status === 'success' || data.status === 'failed') return data;
     await new Promise(resolve => window.setTimeout(resolve, 5000));
   }
@@ -214,15 +220,19 @@ function evidenceReason(record: ReturnType<typeof allEvidenceRecords>[number]) {
 
 export function ConsumerSearch() {
   const navigate = useNavigate();
-  const initialSearch = useRef(readPersistedConsumerSearch()).current;
+  const [searchParams] = useSearchParams();
+  const companyParam = searchParams.get('company')?.trim() || '';
+  const shouldAutorunParam = searchParams.get('autorun') === '1';
+  const initialSearch = useRef(companyParam ? null : readPersistedConsumerSearch()).current;
+  const autorunStarted = useRef(false);
   const initialSpatial = useRef<SpatialLayerAResponse | null>((() => {
     if (!evidenceAnalysisComplete(initialSearch?.analysis || null, initialSearch?.queryId)) return null;
     const latest = initialSearch?.spatialAnalysis || readLatestSpatialAnalysis();
     if (!latest?.query_id || !initialSearch?.queryId || latest.query_id === initialSearch.queryId) return latest;
     return null;
   })()).current;
-  const [mode, setMode] = useState<SearchMode>(initialSearch?.mode || 'company');
-  const [value, setValue] = useState(initialSearch?.value || '');
+  const [mode, setMode] = useState<SearchMode>(companyParam ? 'company' : initialSearch?.mode || 'company');
+  const [value, setValue] = useState(companyParam || initialSearch?.value || '');
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressStep, setProgressStep] = useState(0);
@@ -370,7 +380,7 @@ export function ConsumerSearch() {
     const formData = new FormData();
     formData.append('company_or_abn', searchValue);
     formData.append('news_limit', '3');
-    formData.append('max_llm_results', '10');
+    formData.append('max_llm_results', '3');
     formData.append('max_report_chunks', '3');
     formData.append('australia_only', 'true');
     reportFiles.forEach(file => formData.append('reports', file));
@@ -388,7 +398,7 @@ export function ConsumerSearch() {
     setProgressStep(4);
     setProgressStep(5);
 
-    const spatial = data.query_id ? await waitForSpatialAnalysis(data.query_id) : null;
+    const spatial = data.query_id && !data.database_error ? await waitForSpatialAnalysis(data.query_id) : null;
     const analysisWithSpatial = spatial?.status === 'success'
       ? mergeAnalysisWithSpatial(data, spatial) || data
       : data;
@@ -478,6 +488,14 @@ export function ConsumerSearch() {
   };
 
   const resolve = () => resolveWithValue(mode, value);
+
+  useEffect(() => {
+    if (!companyParam || !shouldAutorunParam || autorunStarted.current) return;
+    autorunStarted.current = true;
+    setMode('company');
+    setValue(companyParam);
+    void resolveWithValue('company', companyParam);
+  }, [companyParam, shouldAutorunParam]);
 
   return (
     <div className="-m-0 bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] min-h-[calc(100vh-65px)]">

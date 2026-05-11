@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { Leaf, Mail, CheckCircle2, X } from 'lucide-react';
 import { requestEmailVerification } from '../../lib/api';
 
+function canUseLocalVerificationFallback() {
+  if (import.meta.env.DEV) return true;
+  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
+}
+
 export function EmailGateModal({ 
   onVerify,
   onClose,
@@ -25,6 +30,13 @@ export function EmailGateModal({
     setMessage(null);
     try {
       const result = await requestEmailVerification(email.trim(), returnTo);
+      if (result.delivery === 'outbox' && canUseLocalVerificationFallback()) {
+        setState('verified');
+        setMessage('Local demo verification completed.');
+        if (result.user_id) window.localStorage.setItem('seeco_user_id', result.user_id);
+        window.setTimeout(() => onVerify(result.email || email.trim()), 400);
+        return;
+      }
       setState('sent');
       setMessage(
         result.delivery === 'outbox'
@@ -41,6 +53,12 @@ export function EmailGateModal({
         });
       }, 1000);
     } catch (error) {
+      if (canUseLocalVerificationFallback()) {
+        setState('verified');
+        setMessage('Local demo verification completed because the email service is unavailable.');
+        window.setTimeout(() => onVerify(email.trim()), 400);
+        return;
+      }
       setState('default');
       setMessage(error instanceof Error ? error.message : 'Could not send verification link.');
     }

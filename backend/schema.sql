@@ -271,3 +271,57 @@ CREATE TABLE report (
 CREATE INDEX idx_report_query_id     ON report(query_id);
 CREATE INDEX idx_report_generated_at ON report(generated_at);
 CREATE INDEX idx_report_status       ON report(status);
+
+
+-- ------------------------------------------------------------
+-- 13. COMPANY_WATCHLIST
+-- User-scoped company monitoring list for Epic 5.
+-- Each user can watch a company once; the company may be linked to
+-- an internal company row when available, or stored from an analysis
+-- payload before persistence succeeds.
+-- ------------------------------------------------------------
+CREATE TABLE company_watchlist (
+    watchlist_id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID        NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+    company_id          UUID        REFERENCES company(company_id) ON DELETE SET NULL,
+    query_id            UUID        REFERENCES search_query(query_id) ON DELETE SET NULL,
+    company_name        VARCHAR(255) NOT NULL,
+    abn                 CHAR(11),
+    industry            VARCHAR(255),
+    region              VARCHAR(255),
+    risk_score          INTEGER,
+    risk_level          VARCHAR(30),
+    alerts_enabled      BOOLEAN     NOT NULL DEFAULT TRUE,
+    notes               TEXT,
+    metadata_json       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP   NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_company_watchlist_user_company
+        UNIQUE NULLS NOT DISTINCT (user_id, company_id, abn, company_name)
+);
+
+CREATE INDEX idx_company_watchlist_user_id ON company_watchlist(user_id, created_at DESC);
+CREATE INDEX idx_company_watchlist_company_id ON company_watchlist(company_id);
+
+
+-- ------------------------------------------------------------
+-- 14. NEWS_ANALYSIS_CACHE
+-- Database-backed cache for expensive company news analysis.
+-- Reuses previously collected article candidates and extracted evidence
+-- for the same normalized company/search settings until the TTL expires.
+-- ------------------------------------------------------------
+CREATE TABLE news_analysis_cache (
+    cache_key           CHAR(64)    PRIMARY KEY,
+    company_id          UUID        REFERENCES company(company_id) ON DELETE SET NULL,
+    normalized_name     VARCHAR(255) NOT NULL,
+    params_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    candidates_json     JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    evidence_json       JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    model_fingerprint   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP   NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMP   NOT NULL
+);
+
+CREATE INDEX idx_news_analysis_cache_company_id ON news_analysis_cache(company_id);
+CREATE INDEX idx_news_analysis_cache_expires_at ON news_analysis_cache(expires_at);

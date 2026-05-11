@@ -67,6 +67,7 @@ export const warmIucnCache = () => get<IucnCacheStatus>('/api/spatial/iucn-cache
 export interface RequestVerificationResponse {
   status: 'sent';
   email: string;
+  user_id?: string;
   delivery: 'smtp' | 'outbox';
   path?: string;
   verification?: {
@@ -336,6 +337,39 @@ export interface SendReportEmailResponse {
   sent_at?: string;
 }
 
+export interface CompanyWatchlistRecord {
+  watchlist_id: string;
+  user_id: string;
+  company_id?: string | null;
+  query_id?: string | null;
+  company_name: string;
+  abn?: string | null;
+  industry?: string | null;
+  region?: string | null;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  alerts_enabled: boolean;
+  notes?: string | null;
+  metadata_json?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AddCompanyWatchlistRequest {
+  user_id: string;
+  company_id?: string | null;
+  query_id?: string | null;
+  company_name: string;
+  abn?: string | null;
+  industry?: string | null;
+  region?: string | null;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  alerts_enabled?: boolean;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 /**
@@ -463,6 +497,26 @@ export const sendPersistedReportEmail = (reportId: string, email: string) =>
 
 export const sendReportEmail = (queryId: string, email: string) =>
   post<SendReportEmailResponse>('/api/report/email', { query_id: queryId, email });
+
+export const getCompanyWatchlist = (userId: string) =>
+  get<{ user_id: string; companies: CompanyWatchlistRecord[] }>(
+    `/api/watchlist/users/${encodeURIComponent(userId)}/companies`
+  );
+
+export const addCompanyToWatchlist = (body: AddCompanyWatchlistRequest) =>
+  post<{ status: string; company: CompanyWatchlistRecord }>('/api/watchlist/companies', body);
+
+export const deleteCompanyFromWatchlist = (userId: string, watchlistId: string) =>
+  fetch(`${BASE}/api/watchlist/users/${encodeURIComponent(userId)}/companies/${encodeURIComponent(watchlistId)}`, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error((errBody as { detail?: string }).detail ?? `DELETE watchlist company failed (${res.status})`);
+    }
+    return res.json() as Promise<{ status: string; watchlist_id: string }>;
+  });
 
 /**
  * GET /health
