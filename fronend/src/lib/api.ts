@@ -236,6 +236,18 @@ export interface SpatialSpeciesRecord {
   iucn_url?: string | null;
 }
 
+export interface SpatialThreatenedOccurrence {
+  scientific_name: string;
+  common_name?: string | null;
+  iucn_category?: string | null;
+  lat: number;
+  lon: number;
+  event_date?: string | null;
+  data_resource?: string | null;
+  basis_of_record?: string | null;
+  occurrence_id?: string | null;
+}
+
 export interface SpatialLayerAResponse {
   status: 'success' | 'loading' | 'failed';
   generated_at?: string;
@@ -298,6 +310,7 @@ export interface SpatialLayerAResponse {
   combined_score_breakdown?: Record<string, number | Record<string, number>>;
   score_breakdown?: Record<string, number>;
   threatened_species?: SpatialSpeciesRecord[];
+  threatened_occurrences?: SpatialThreatenedOccurrence[];
   all_species?: SpatialSpeciesRecord[];
 }
 

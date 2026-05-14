@@ -3,7 +3,6 @@ import {
   Bird,
   Database,
   ExternalLink,
-  MapPinned,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
@@ -102,7 +101,6 @@ export function FindingsPanel({
   const score = layerA?.species_threat_score ?? 0;
   const breakdown = Object.entries(layerA?.score_breakdown ?? {});
   const threatenedSpecies = layerA?.threatened_species ?? [];
-  const allSpecies = layerA?.all_species ?? [];
   const maxBreakdown = Math.max(1, ...breakdown.map(([, count]) => count));
   const generatedAt = layerA?.generated_at
     ? new Date(layerA.generated_at).toLocaleString("en-AU", {
@@ -222,14 +220,6 @@ export function FindingsPanel({
         {layerA?.status === "success" && threatenedSpecies.length === 0 && <EmptyRow label="No CR/EN/VU species returned for this Layer A run." />}
         {threatenedSpecies.slice(0, 8).map((species) => (
           <SpeciesRow key={`${species.scientific_name}-${species.iucn_category}`} species={species} />
-        ))}
-      </div>
-
-      <PanelHeader icon={MapPinned} title="Sampled Species Records" subtitle="Top ALA species facets returned by the query" />
-      <div className="mb-6 space-y-2">
-        {loading && !layerA && <EmptyRow label="Loading species records..." />}
-        {allSpecies.slice(0, 10).map((species) => (
-          <SpeciesRow key={`${species.scientific_name}-${species.record_count}`} species={species} />
         ))}
       </div>
 

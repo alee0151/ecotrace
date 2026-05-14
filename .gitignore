@@ -32,3 +32,5 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+datasets/
